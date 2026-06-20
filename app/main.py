@@ -13,16 +13,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.config import settings
-from app.database import dispose_engine
+from app.database import engine
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup / shutdown hooks. The DB engine is created lazily on first use,
-    so nothing here requires a database connection to boot."""
+    """Application startup / shutdown hooks."""
     yield
-    # Clean up the connection pool if the engine was ever initialized.
-    await dispose_engine()
+    # Dispose the connection pool on shutdown.
+    await engine.dispose()
 
 
 def create_app() -> FastAPI:

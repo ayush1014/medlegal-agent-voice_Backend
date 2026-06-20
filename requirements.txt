@@ -9,3 +9,19 @@ pydantic-settings==2.7.1
 # Database (async SQLAlchemy + Neon Postgres driver)
 sqlalchemy[asyncio]==2.0.43
 asyncpg==0.30.0
+
+# Vector search (RAG) — pgvector types + halfvec
+pgvector==0.3.6
+
+# Migrations
+alembic==1.14.0
+
+# Auth & security
+argon2-cffi==23.1.0
+PyJWT==2.10.1
+email-validator==2.2.0
+httpx==0.28.1
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.25.2
