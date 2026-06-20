@@ -67,6 +67,18 @@ class Settings(BaseSettings):
     twilio_auth_token: str | None = None
     twilio_verify_service_sid: str | None = None
 
+    # --- Rate limiting (abuse / SMS-bomb / toll-fraud guards) -------------
+    otp_max_per_phone_per_hour: int = 5
+    otp_max_per_ip_per_hour: int = 30
+    login_max_per_identifier_per_15min: int = 10
+
+    # --- Signup / provisioning --------------------------------------------
+    # Short-lived token proving a phone was OTP-verified, to complete signup.
+    signup_token_ttl_seconds: int = 600  # 10 minutes
+    # Shared secret gating the internal admin-provision endpoint. If unset, the
+    # endpoint is disabled (returns 404) — there is no public admin signup.
+    provision_secret: str | None = None
+
     @property
     def is_production(self) -> bool:
         return self.environment.lower() == "production"

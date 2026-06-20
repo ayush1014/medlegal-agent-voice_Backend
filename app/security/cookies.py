@@ -51,6 +51,16 @@ def set_auth_cookies(
     )
 
 
+def set_csrf_cookie(response: Response, csrf_token: str) -> None:
+    """Set just the (JS-readable) CSRF cookie — used to bootstrap a token for a
+    page that reloaded and lost its in-memory copy."""
+    response.set_cookie(
+        CSRF_COOKIE_NAME,
+        csrf_token,
+        **_common(False, settings.refresh_token_ttl_seconds, "/"),
+    )
+
+
 def clear_auth_cookies(response: Response) -> None:
     domain = settings.cookie_domain
     response.delete_cookie(ACCESS_COOKIE, path="/", domain=domain)

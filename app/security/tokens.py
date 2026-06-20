@@ -18,6 +18,7 @@ from app.config import settings
 
 ACCESS = "access"
 REFRESH = "refresh"
+SIGNUP = "signup"
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,15 @@ def create_refresh_token(session_id: uuid.UUID, claims: AccessClaims) -> str:
             "role": claims.role,
         },
         settings.refresh_token_ttl_seconds,
+    )
+
+
+def create_signup_token(organization_id: uuid.UUID, phone: str) -> str:
+    """Short-lived proof that `phone` was OTP-verified for this org, so the
+    client signup step doesn't re-verify."""
+    return _encode(
+        {"token_use": SIGNUP, "org": str(organization_id), "phone": phone},
+        settings.signup_token_ttl_seconds,
     )
 
 

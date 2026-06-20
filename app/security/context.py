@@ -22,6 +22,14 @@ class TenantContext:
     role: str | None = None
 
 
+def system_context(organization_id: uuid.UUID) -> TenantContext:
+    """The trusted service identity scoped to one firm. Used for pre-auth/bootstrap
+    work (login lookups, signup, provisioning) — RLS still pins it to this org."""
+    return TenantContext(
+        organization_id=organization_id, subject_type="system", subject_id=None, role=None
+    )
+
+
 _current_context: ContextVar[TenantContext | None] = ContextVar(
     "tenant_context", default=None
 )
