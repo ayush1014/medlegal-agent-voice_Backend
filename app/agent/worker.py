@@ -30,6 +30,7 @@ from livekit.agents import (
     Agent,
     AgentSession,
     JobContext,
+    RoomInputOptions,
     TurnHandlingOptions,
     WorkerOptions,
     cli,
@@ -37,7 +38,7 @@ from livekit.agents import (
     metrics,
 )
 from livekit.agents.voice.turn import EndpointingOptions, InterruptionOptions
-from livekit.plugins import deepgram, openai, silero
+from livekit.plugins import deepgram, noise_cancellation, openai, silero
 
 logger = logging.getLogger("medlegal.voice")
 
@@ -175,17 +176,14 @@ async def entrypoint(ctx: JobContext) -> None:
         # and mis-fired even on complete short answers like "My name is Ayush").
         # Raise max_delay toward 2.5 if it starts cutting callers off mid-thought.
         #
-        # Barge-in DISABLED. On a telephony line the agent's own TTS echoes back and
-        # was being mis-detected as the caller interrupting — cutting the agent off
-        # mid-sentence (worst during slow letter-by-letter spelling, where echoed
-        # letters transcribe as multiple tokens so min_words can't filter them). With
-        # interruptions off, the agent always finishes its (short) turns. Caller audio
-        # during agent speech is BUFFERED, not discarded, so nothing they say is lost.
-        # (To restore barge-in later, add LiveKit telephony noise cancellation so the
-        # agent stops hearing its own echo.)
+        # Barge-in ON (natural conversation). The reason it used to cut the agent off
+        # mid-spelling was telephony ECHO — the agent heard its own TTS and thought the
+        # caller was interrupting. That's now killed by BVCTelephony noise cancellation
+        # on the room input (see session.start below), so interruptions only fire on
+        # the REAL caller. min_delay/max_delay bound the end-of-turn wait.
         turn_handling=TurnHandlingOptions(
             endpointing=EndpointingOptions(min_delay=0.4, max_delay=1.5),
-            interruption=InterruptionOptions(enabled=False, discard_audio_if_uninterruptible=False),
+            interruption=InterruptionOptions(enabled=True),
         ),
     )
 
@@ -253,7 +251,14 @@ async def entrypoint(ctx: JobContext) -> None:
     # Prompt size drives prefill latency on every turn — log it once so we can see the cost.
     logger.info("⏱ system prompt = %d chars (~%d tokens), returning=%s, memory_block=%d chars",
                 len(instructions), len(instructions) // 4, intake_ctx.returning, len(block))
-    await session.start(agent=agent, room=ctx.room)
+    # BVCTelephony cancels the agent's own echo + line noise from the inbound audio,
+    # so STT/barge-in only react to the real caller (fixes the spelling cut-off while
+    # KEEPING natural interruptions).
+    await session.start(
+        agent=agent,
+        room=ctx.room,
+        room_input_options=RoomInputOptions(noise_cancellation=noise_cancellation.BVCTelephony()),
+    )
     # Scripted recording/AI disclosure (compliance), personalized only when the pack
     # warrants it. allow_interruptions=False so it always plays in full and the
     # agent's own voice during AEC warmup can't be transcribed as a phantom caller
