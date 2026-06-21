@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     # --- Database (Neon Postgres) -----------------------------------------
     # Required. Owner connection string — used for migrations and admin tasks.
     database_url: str
-
+    
     # Least-privilege application role. The app connects as this role at runtime
     # so Row-Level Security actually applies (the owner role bypasses RLS). The
     # runtime URL is derived from `database_url` (same host/db) with these creds;
@@ -50,8 +50,9 @@ class Settings(BaseSettings):
     )
 
     # --- Auth: JWT & cookies ----------------------------------------------
-    # Signing secret for session JWTs. MUST be overridden in any shared/prod env.
-    jwt_secret: str = "dev-insecure-change-me"
+    # Signing secret for session JWTs. Required (no default) so startup fails
+    # fast if unset. pydantic-settings reads it from the JWT_SECRET env var.
+    jwt_secret: str
     jwt_algorithm: str = "HS256"
     access_token_ttl_seconds: int = 60 * 15  # 15 minutes
     refresh_token_ttl_seconds: int = 60 * 60 * 24 * 30  # 30 days
@@ -66,11 +67,69 @@ class Settings(BaseSettings):
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_verify_service_sid: str | None = None
+    # Twilio WhatsApp sender (bare E.164, no "whatsapp:" prefix). The funnel uses
+    # WhatsApp for follow-ups + document gathering (SMS A2P not provisioned).
+    # Twilio sandbox sender is +14155238886.
+    twilio_whatsapp_number: str | None = None
+    # Channel for follow-up / document / retainer messages: "whatsapp" or "sms".
+    # SMS needs no template approval (set FUNNEL_CHANNEL=sms to use it now); WhatsApp
+    # needs approved templates for business-initiated sends. US SMS at volume needs A2P.
+    funnel_channel: str = "whatsapp"
+    # Approved WhatsApp Content template SIDs (HX…). REQUIRED for business-initiated
+    # messages (outside the 24h window WhatsApp rejects freeform with error 63016).
+    # Create them in Twilio Content Template Builder; see docs/whatsapp_templates.md.
+    whatsapp_template_doc_request: str | None = None   # vars: 1=firm 2=checklist 3=link
+    whatsapp_template_retainer: str | None = None       # vars: 1=firm 2=link
+    whatsapp_template_nudge: str | None = None          # vars: 1=firm
 
     # --- Rate limiting (abuse / SMS-bomb / toll-fraud guards) -------------
     otp_max_per_phone_per_hour: int = 5
     otp_max_per_ip_per_hour: int = 30
     login_max_per_identifier_per_15min: int = 10
+
+    # --- Voice / AI providers (PRD-2) -------------------------------------
+    # DeepSeek (OpenAI-compatible) drives the intake LLM + post-call extraction.
+    deepseek_api_key: str | None = None
+    deepseek_base_url: str = "https://api.deepseek.com"
+    # Post-call extraction (latency irrelevant) → thinking model for accuracy.
+    deepseek_model: str = "deepseek-v4-pro"
+    # Realtime conversation → non-thinking model for low turn latency.
+    deepseek_realtime_model: str = "deepseek-v4-flash"
+
+    # Deepgram Nova 3 (STT) + Aura 2 (TTS).
+    deepgram_api_key: str | None = None
+
+    # LiveKit (realtime rooms + SIP ingress).
+    livekit_url: str | None = None
+    livekit_api_key: str | None = None
+    livekit_api_secret: str | None = None
+    # LiveKit SIP host the Twilio call is bridged into (e.g. "xxxx.sip.livekit.cloud").
+    # Until set, inbound calls fall back to voicemail capture.
+    livekit_sip_uri: str | None = None
+
+    # Public base URL Twilio calls back for status/recording (ngrok in dev).
+    public_base_url: str | None = None
+    # Verify inbound Twilio webhook signatures (disable only in tests/local).
+    twilio_validate_webhooks: bool = True
+    # Frontend base URL for client-portal deep links in SMS (e.g. http://localhost:3000).
+    frontend_base_url: str | None = None
+
+    # --- Background jobs (follow-up automation) ---------------------------
+    # Run the follow-up sweep inside the API process on an interval. Leave OFF
+    # in multi-instance deploys (use the `python -m app.jobs.followups` cron
+    # instead) so the tick runs exactly once.
+    followups_scheduler_enabled: bool = False
+    followups_interval_seconds: int = 900  # 15 minutes
+
+    # OpenAI embeddings for RAG memory (dimension lives in models.enums).
+    openai_api_key: str | None = None
+    embedding_model: str = "text-embedding-3-small"
+
+    # GCS storage for recordings/documents.
+    storage_backend: str = "gcs"
+    gcs_bucket_name: str | None = None
+    google_cloud_project: str | None = None
+    google_application_credentials_json: str | None = None
 
     # --- Signup / provisioning --------------------------------------------
     # Short-lived token proving a phone was OTP-verified, to complete signup.

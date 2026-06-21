@@ -85,3 +85,35 @@ async def get_authed_db(
     )
     async with session_scope(ctx) as session:
         yield session
+
+
+async def get_staff_db(
+    claims: AccessClaims = Depends(get_access_claims),
+) -> AsyncGenerator[AsyncSession, None]:
+    """Firm-staff-only session (lead management). Clients are 403'd."""
+    if claims.subject_type != "user":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Staff only")
+    ctx = TenantContext(
+        organization_id=claims.organization_id,
+        subject_type=claims.subject_type,
+        subject_id=claims.subject_id,
+        role=claims.role,
+    )
+    async with session_scope(ctx) as session:
+        yield session
+
+
+async def get_client_db(
+    claims: AccessClaims = Depends(get_access_claims),
+) -> AsyncGenerator[AsyncSession, None]:
+    """Client-only session (the patient portal). Staff are 403'd."""
+    if claims.subject_type != "client":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Clients only")
+    ctx = TenantContext(
+        organization_id=claims.organization_id,
+        subject_type=claims.subject_type,
+        subject_id=claims.subject_id,
+        role=claims.role,
+    )
+    async with session_scope(ctx) as session:
+        yield session

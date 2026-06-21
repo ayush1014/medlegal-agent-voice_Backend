@@ -6,6 +6,9 @@ Run locally:
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -14,12 +17,35 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.config import settings
 from app.database import engine
+from app.services import lead_intelligence  # noqa: F401 - registers outbox handlers
+
+logger = logging.getLogger("medlegal.scheduler")
+
+
+async def _followups_scheduler() -> None:
+    """In-app follow-up tick (single-instance deploys; cron is canonical otherwise)."""
+    from app.jobs.followups import run_all_orgs
+
+    while True:
+        await asyncio.sleep(settings.followups_interval_seconds)
+        try:
+            result = await run_all_orgs()
+            logger.info("followups tick: %s", result)
+        except Exception:  # noqa: BLE001 - a bad tick must not kill the loop
+            logger.exception("followups tick failed")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup / shutdown hooks."""
+    task = None
+    if settings.followups_scheduler_enabled:
+        task = asyncio.create_task(_followups_scheduler())
     yield
+    if task is not None:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
     # Dispose the connection pool on shutdown.
     await engine.dispose()
 
@@ -42,6 +68,11 @@ def create_app() -> FastAPI:
 
     # All routes live under the API prefix (e.g. /api/health).
     app.include_router(api_router, prefix=settings.api_v1_prefix)
+
+    # Short links (/u/{code}) mounted at root so texted URLs stay tiny + clickable.
+    from app.api.routes import links
+
+    app.include_router(links.router)
 
     @app.get("/", tags=["root"])
     async def root() -> dict[str, str]:

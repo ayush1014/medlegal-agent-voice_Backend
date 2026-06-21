@@ -1,6 +1,7 @@
 # Web framework + ASGI server
 fastapi==0.118.0
 uvicorn[standard]==0.34.0
+python-multipart==0.0.20
 
 # Settings / validation
 pydantic==2.11.7
@@ -21,6 +22,23 @@ argon2-cffi==23.1.0
 PyJWT==2.10.1
 email-validator==2.2.0
 httpx==0.28.1
+
+# Voice / AI providers (PRD-2)
+# openai 2.x is required by livekit-agents; langchain-openai 0.2.14 declares
+# openai<2 but works at runtime on 2.x (verified by the live DeepSeek tests).
+openai==2.43.0
+google-cloud-storage==2.19.0
+twilio==9.4.3
+livekit-api==0.8.2
+livekit-agents==1.6.2
+livekit-plugins-deepgram==1.6.2
+livekit-plugins-openai==1.6.2
+livekit-plugins-silero==1.6.2
+
+# Agent orchestration (PRD-2)
+langgraph==0.2.62
+langchain-openai==0.2.14
+langchain-core==0.3.28
 
 # Testing
 pytest==8.3.4

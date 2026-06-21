@@ -5,11 +5,12 @@ views stay fast."""
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     CheckConstraint,
+    Date,
     ForeignKey,
     Index,
     Integer,
@@ -49,6 +50,8 @@ class Lead(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     email: Mapped[str | None] = mapped_column(String(320))
     preferred_contact_method: Mapped[str | None] = mapped_column(String(32))
     best_time_to_contact: Mapped[str | None] = mapped_column(String(64))
+    # Captured at intake; used to verify a returning caller (name + DOB).
+    date_of_birth: Mapped[date | None] = mapped_column(Date)
 
     # --- Case header (denormalized for fast lists) ---
     case_type: Mapped[str] = mapped_column(String(40), nullable=False)

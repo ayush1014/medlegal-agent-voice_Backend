@@ -55,6 +55,9 @@ from app.models.agent_event import AgentEvent
 from app.models.outbox_event import OutboxEvent
 from app.models.webhook_event import WebhookEvent
 
+# Group I — short links (clickable SMS/WhatsApp URLs)
+from app.models.short_link import ShortLink
+
 __all__ = [
     "Organization",
     "User",
@@ -90,4 +93,5 @@ __all__ = [
     "AgentEvent",
     "OutboxEvent",
     "WebhookEvent",
+    "ShortLink",
 ]
