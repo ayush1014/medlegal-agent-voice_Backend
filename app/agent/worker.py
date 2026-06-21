@@ -23,48 +23,44 @@ Run:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 
 from livekit.agents import (
     Agent,
     AgentSession,
     JobContext,
+    TurnHandlingOptions,
     WorkerOptions,
     cli,
     function_tool,
+    metrics,
 )
+from livekit.agents.voice.turn import EndpointingOptions, InterruptionOptions
 from livekit.plugins import deepgram, openai, silero
+
+logger = logging.getLogger("medlegal.voice")
 
 from app.agent.context import IntakeContext
 from app.agent.prompt import GREETING, render_system_prompt
 from app.config import settings
 from app.database import session_scope
 from app.security.context import system_context
-from app.services import intake_service, voice_service
+from app.services import context_service, intake_service, outbox_service, voice_service
+from app.services.context_service import ContextPack
 
-# Deepgram Aura 2 voices per language (default personas — see PRD §13.1).
-_AURA_VOICE = {"en": "aura-2-thalia-en", "es": "aura-2-celeste-es"}
-
-
-def _returning_instructions(dossier: str) -> str:
-    """Appended to the agent prompt for a recognized returning caller."""
-    return (
-        "\n\nRETURNING CALLER — this phone number is already in our system. Here is what we already know "
-        "about this caller; do NOT ask for any of it again — acknowledge it and build on it:\n"
-        f"{dossier}\n"
-        "Warmly greet them by name, briefly confirm you're speaking with the right person (for privacy), "
-        "then continue their existing case — ask only what's new, unclear, or still missing. Never make "
-        "them repeat their story from scratch."
-    )
+# Deepgram Aura 2 voice (English-only for v1).
+_TTS_VOICE = "aura-2-asteria-en"
 
 
-def _greeting_for(ctx: IntakeContext) -> str:
-    """Compliance greeting (recording + AI disclosure), personalized for returners."""
-    if ctx.returning and ctx.known_name:
-        first = ctx.known_name.split()[0]
+def _greeting_for(ctx: IntakeContext, pack: ContextPack) -> str:
+    """Compliance greeting (recording + AI disclosure). Personalized only when the
+    context pack actually warrants it (known name + real recalled context)."""
+    if pack.warm_ok() and pack.anchor and pack.anchor.full_name:
+        first = pack.anchor.full_name.split()[0]
         return (
             f"Thanks for calling {ctx.firm_name} — good to have you back, {first}. This call is recorded "
-            "and you're speaking with an AI assistant. Para espanol, diga espanol."
+            "and you're speaking with an AI assistant. How can I help you today?"
         )
     return GREETING["en"].format(firm=ctx.firm_name)
 
@@ -131,12 +127,14 @@ async def entrypoint(ctx: JobContext) -> None:
         return
 
     # Resolve-or-create the lead by phone (returning callers keep one profile) +
-    # this call's transcript. Load their dossier so the agent continues, not restarts.
-    dossier = None
+    # this call's transcript, then assemble the Hybrid RAG + KG context pack so the
+    # agent continues the case instead of restarting. Recap mode = no network.
     async with session_scope(system_context(intake_ctx.organization_id)) as db:
         await intake_service.create_session_records(db, intake_ctx)
-        if intake_ctx.returning:
-            dossier = await intake_service.build_dossier(db, intake_ctx.lead_id)
+        pack = await context_service.assemble_context(
+            intake_ctx.organization_id, intake_ctx.lead_id,
+            returning=intake_ctx.returning, current_transcript_id=intake_ctx.transcript_id, db=db,
+        )
 
     state = {"ended": False, "emergency": False}
     transcript_lines: list[str] = []
@@ -161,21 +159,33 @@ async def entrypoint(ctx: JobContext) -> None:
     session = AgentSession(
         # no_delay + tighter endpointing = faster end-of-speech → lower turn latency.
         stt=deepgram.STT(
-            model="nova-3", language="multi", interim_results=True, no_delay=True,
+            model="nova-3", language="en", interim_results=True, no_delay=True,
             endpointing_ms=300, api_key=settings.deepgram_api_key,
         ),
-        # Native streaming LLM (DeepSeek, OpenAI-compatible) → tokens flow into TTS.
+        # Native streaming LLM (OpenAI gpt-4o-mini) → tokens flow straight into TTS.
         llm=openai.LLM(
-            model=settings.deepseek_realtime_model,
-            base_url=settings.deepseek_base_url,
-            api_key=settings.deepseek_api_key,
+            model=settings.voice_llm_model,
+            api_key=settings.openai_api_key,
             temperature=0.4,
         ),
-        tts=deepgram.TTS(model=_AURA_VOICE["en"], api_key=settings.deepgram_api_key),
+        tts=deepgram.TTS(model=_TTS_VOICE, api_key=settings.deepgram_api_key),
         vad=silero.VAD.load(),
-        # Lower = snappier; raise toward 0.6 if it cuts callers off mid-sentence.
-        min_endpointing_delay=0.4,
-        allow_interruptions=True,  # barge-in: stop & listen when the caller speaks
+        # min_delay = snappy floor when the turn detector is confident the caller
+        # finished; max_delay caps the wait when it's UNSURE (was 2.5s → dead air,
+        # and mis-fired even on complete short answers like "My name is Ayush").
+        # Raise max_delay toward 2.5 if it starts cutting callers off mid-thought.
+        #
+        # Interruption: VAD mode (local) instead of adaptive — adaptive runs a cloud
+        # inference every 100ms WHILE the agent speaks, which both stutters the
+        # worker's outgoing audio and false-fires on phone-line echo/noise (pausing
+        # the agent mid-sentence → the "cut off in the middle"). min_duration +
+        # min_words require sustained real speech before a barge-in counts.
+        turn_handling=TurnHandlingOptions(
+            endpointing=EndpointingOptions(min_delay=0.4, max_delay=1.5),
+            interruption=InterruptionOptions(
+                enabled=True, mode="vad", min_duration=0.6, min_words=2
+            ),
+        ),
     )
 
     # --- Persist each finalized turn off the critical path ---
@@ -190,7 +200,28 @@ async def entrypoint(ctx: JobContext) -> None:
         transcript_lines.append(f"{'Caller' if speaker == 'caller' else 'Agent'}: {text}")
         asyncio.create_task(_persist_segment(intake_ctx, speaker, text))
 
+    # --- Per-stage latency instrumentation (the numbers that matter for tuning) ---
+    @session.on("metrics_collected")
+    def _on_metrics(ev) -> None:
+        m = ev.metrics
+        if isinstance(m, metrics.LLMMetrics):
+            logger.info("⏱ LLM ttft=%.2fs total=%.2fs tok/s=%.1f prompt_tok=%s",
+                        getattr(m, "ttft", -1), getattr(m, "duration", -1),
+                        getattr(m, "tokens_per_second", -1), getattr(m, "prompt_tokens", "?"))
+        elif isinstance(m, metrics.TTSMetrics):
+            logger.info("⏱ TTS ttfb=%.2fs total=%.2fs", getattr(m, "ttfb", -1), getattr(m, "duration", -1))
+        elif isinstance(m, metrics.STTMetrics):
+            logger.info("⏱ STT audio=%.2fs duration=%.2fs", getattr(m, "audio_duration", -1),
+                        getattr(m, "duration", -1))
+        elif isinstance(m, metrics.EOUMetrics):
+            logger.info("⏱ EOU end_of_utterance=%.2fs transcription_delay=%.2fs",
+                        getattr(m, "end_of_utterance_delay", -1), getattr(m, "transcription_delay", -1))
+
     async def _finalize() -> None:
+        # Shutdown runs against a hard kill timer — do ONLY fast DB work here:
+        # persist the transcript and emit `call.ended`. The heavy pipeline
+        # (extraction → memory → intelligence) is drained server-side by the
+        # post-call worker, so a hangup can never kill it mid-flight.
         status = "complete" if state["ended"] else "failed"
         transcript_text = "\n".join(transcript_lines)
         try:
@@ -198,32 +229,35 @@ async def entrypoint(ctx: JobContext) -> None:
                 await intake_service.finalize_transcript(
                     db, intake_ctx, status=status, full_text=transcript_text
                 )
-        except Exception:  # noqa: BLE001
-            pass
-        # Post-call handoff: extraction → memory → intake.completed → welcome SMS.
-        try:
-            from app.services.intake_pipeline import run_post_call_pipeline
-
-            await run_post_call_pipeline(
-                organization_id=intake_ctx.organization_id,
-                lead_id=intake_ctx.lead_id,
-                transcript_text=transcript_text,
-                transcript_id=intake_ctx.transcript_id,
-                voice_call_id=intake_ctx.voice_call_id,
-                caller_phone=intake_ctx.caller_phone,
-            )
-        except Exception:  # noqa: BLE001 - never crash teardown; a publisher can retry
-            pass
+                await outbox_service.emit_event(
+                    db, intake_ctx.organization_id,
+                    aggregate_type="lead", aggregate_id=intake_ctx.lead_id,
+                    event_type="call.ended",
+                    payload={
+                        "transcript_id": str(intake_ctx.transcript_id) if intake_ctx.transcript_id else None,
+                        "voice_call_id": str(intake_ctx.voice_call_id) if intake_ctx.voice_call_id else None,
+                        "caller_phone": intake_ctx.caller_phone,
+                    },
+                )
+        except Exception:  # noqa: BLE001 - teardown must never raise
+            logger.exception("finalize/call.ended emit failed for lead %s", intake_ctx.lead_id)
 
     ctx.add_shutdown_callback(_finalize)
 
     instructions = render_system_prompt(intake_ctx.firm_name, "en")
-    if dossier:
-        instructions += _returning_instructions(dossier)
+    block = pack.to_prompt()  # Hybrid RAG + KG memory briefing (or "" for a brand-new caller)
+    if block:
+        instructions += "\n\n" + block
     agent = Agent(instructions=instructions, tools=[flag_emergency, end_intake])
+    # Prompt size drives prefill latency on every turn — log it once so we can see the cost.
+    logger.info("⏱ system prompt = %d chars (~%d tokens), returning=%s, memory_block=%d chars",
+                len(instructions), len(instructions) // 4, intake_ctx.returning, len(block))
     await session.start(agent=agent, room=ctx.room)
-    # Scripted recording/AI disclosure (compliance), personalized for returning callers.
-    await session.say(_greeting_for(intake_ctx))
+    # Scripted recording/AI disclosure (compliance), personalized only when the pack
+    # warrants it. allow_interruptions=False so it always plays in full and the
+    # agent's own voice during AEC warmup can't be transcribed as a phantom caller
+    # turn (the "we got cut off" echo bug) — and the disclosure is never clipped.
+    await session.say(_greeting_for(intake_ctx, pack), allow_interruptions=False)
 
 
 def main() -> None:

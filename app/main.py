@@ -35,14 +35,33 @@ async def _followups_scheduler() -> None:
             logger.exception("followups tick failed")
 
 
+async def _post_call_worker() -> None:
+    """Drain `call.ended` events (heavy post-call pipeline) off the voice worker.
+    Runs in the always-alive API process, so a hangup never kills extraction."""
+    from app.jobs.post_call import process_pending_call_ended
+    from app.services import outbox_publisher
+
+    while True:
+        try:
+            res = await process_pending_call_ended()
+            if res.get("processed") or res.get("failed") or res.get("retried"):
+                logger.info("post-call tick: %s", res)
+            await outbox_publisher.dispatch_pending()  # intake.completed → scoring + retries
+        except Exception:  # noqa: BLE001 - a bad tick must not kill the loop
+            logger.exception("post-call tick failed")
+        await asyncio.sleep(settings.post_call_interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup / shutdown hooks."""
-    task = None
+    tasks: list[asyncio.Task] = []
+    if settings.post_call_worker_enabled:
+        tasks.append(asyncio.create_task(_post_call_worker()))
     if settings.followups_scheduler_enabled:
-        task = asyncio.create_task(_followups_scheduler())
+        tasks.append(asyncio.create_task(_followups_scheduler()))
     yield
-    if task is not None:
+    for task in tasks:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task

@@ -121,9 +121,24 @@ class Settings(BaseSettings):
     followups_scheduler_enabled: bool = False
     followups_interval_seconds: int = 900  # 15 minutes
 
+    # Post-call processor: drains `call.ended` outbox events (extraction → memory →
+    # intelligence) inside the API process, OFF the voice worker's shutdown path so
+    # a hangup can never kill it.
+    post_call_worker_enabled: bool = True
+    post_call_interval_seconds: int = 5
+
     # OpenAI embeddings for RAG memory (dimension lives in models.enums).
     openai_api_key: str | None = None
     embedding_model: str = "text-embedding-3-small"
+
+    # LLM models (OpenAI). voice = realtime conversation; extraction = post-call
+    # facts + dashboard chat QA. (DeepSeek settings above kept for easy revert.)
+    voice_llm_model: str = "gpt-4o-mini"
+    extraction_model: str = "gpt-4o-mini"
+
+    # Firm timezone — anchors the "today" the voice agent uses to resolve relative
+    # dates a caller gives ("last Tuesday", "a couple weeks ago").
+    firm_timezone: str = "America/New_York"
 
     # GCS storage for recordings/documents.
     storage_backend: str = "gcs"

@@ -53,19 +53,6 @@ async def test_same_number_reuses_one_lead(org, owner_engine):
     assert n_transcripts == 2      # but a transcript per call
 
 
-async def test_dossier_recall(org, owner_engine):
-    lead_id = uuid.uuid4()
-    async with owner_engine.begin() as c:
-        await c.execute(text("INSERT INTO leads (id,organization_id,full_name,phone,case_type,source,"
-                             "ai_summary) VALUES (:i,:o,'Jane Roe','+15550000000','Auto Accident',"
-                             "'inbound_call','Rear-ended at a light.')"), {"i": lead_id, "o": org})
-        await c.execute(text("INSERT INTO injuries (organization_id,lead_id,body_part,severity) "
-                             "VALUES (:o,:l,'neck','Moderate')"), {"o": org, "l": lead_id})
-    async with session_scope(system_context(org)) as db:
-        dossier = await intake_service.build_dossier(db, lead_id)
-    assert dossier and "Jane Roe" in dossier and "neck" in dossier and "Auto Accident" in dossier
-
-
 async def test_extraction_dedup_on_repeat(org, owner_engine):
     lead_id = uuid.uuid4()
     async with owner_engine.begin() as c:

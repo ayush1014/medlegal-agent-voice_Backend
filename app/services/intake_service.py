@@ -115,47 +115,6 @@ async def update_partial_lead(db: AsyncSession, ctx: IntakeContext, fields: dict
     )
 
 
-async def build_dossier(db: AsyncSession, lead_id: uuid.UUID) -> str | None:
-    """A concise 'what we already know' brief for a returning caller, assembled
-    from the lead + child tables. None if there's nothing meaningful yet."""
-    lead = (await db.execute(
-        text("SELECT full_name, case_type, pipeline_status, ai_summary FROM leads WHERE id=:l"),
-        {"l": lead_id})).first()
-    if lead is None:
-        return None
-    injuries = [r[0] for r in (await db.execute(
-        text("SELECT body_part FROM injuries WHERE lead_id=:l AND body_part IS NOT NULL"),
-        {"l": lead_id})).all()]
-    treatments = [r[0] for r in (await db.execute(
-        text("SELECT DISTINCT provider_name FROM medical_treatments WHERE lead_id=:l "
-             "AND provider_name IS NOT NULL"), {"l": lead_id})).all()]
-    inc = (await db.execute(
-        text("SELECT incident_date, description FROM incidents WHERE lead_id=:l "
-             "ORDER BY created_at LIMIT 1"), {"l": lead_id})).first()
-
-    named = lead.full_name and lead.full_name != "Caller"
-    has_case = lead.case_type and lead.case_type != "Other Personal Injury"
-    if not (named or has_case or injuries or treatments or inc or lead.ai_summary):
-        return None
-
-    parts: list[str] = []
-    if named:
-        parts.append(f"Name: {lead.full_name}.")
-    if has_case:
-        parts.append(f"Case type: {lead.case_type}.")
-    if inc and inc.description:
-        parts.append(f"Incident: {inc.description}.")
-    if injuries:
-        parts.append("Injuries: " + ", ".join(sorted(set(injuries))) + ".")
-    if treatments:
-        parts.append("Treatment with: " + ", ".join(treatments) + ".")
-    if lead.pipeline_status:
-        parts.append(f"Current stage: {lead.pipeline_status}.")
-    if lead.ai_summary:
-        parts.append(f"Prior summary: {lead.ai_summary}")
-    return " ".join(parts)
-
-
 async def lookup_prior_lead(db: AsyncSession, ctx: IntakeContext) -> dict | None:
     """Most recent prior lead for this caller's number (for returning-caller resume)."""
     row = (

@@ -15,6 +15,7 @@ from app.agent.embeddings import embed_text, embed_texts
 from app.agent.extraction import Extraction
 from app.database import session_scope
 from app.security.context import system_context
+from app.services import case_vocab
 
 
 def chunk_transcript(transcript: str, max_chars: int = 800) -> list[str]:
@@ -35,8 +36,12 @@ def chunk_transcript(transcript: str, max_chars: int = 800) -> list[str]:
     return chunks
 
 
-def _vec(values: list[float]) -> str:
+def vec(values: list[float]) -> str:
+    """Serialize a float list to a pgvector/halfvec literal '[...]'."""
     return "[" + ",".join(f"{v:.6f}" for v in values) + "]"
+
+
+_vec = vec  # backward-compatible alias (one release)
 
 
 async def _store_chunks(
@@ -80,7 +85,7 @@ async def build_case_graph(db: AsyncSession, ctx: IntakeContext, ex: Extraction)
         )
         counts["edges"] += 1
 
-    client = await node("person", ex.lead.full_name or "Client", {"role": "client"})
+    client = await node("person", ex.lead.full_name or "Client", {"role": case_vocab.CLIENT_ROLE})
 
     incident_node = None
     for inc in ex.incidents:
@@ -99,14 +104,14 @@ async def build_case_graph(db: AsyncSession, ctx: IntakeContext, ex: Extraction)
     at_fault_node = None
     for pa in ex.parties:
         n = await node("person", pa.full_name or pa.role, {"role": pa.role})
-        await edge(n, pa.role or "involved_in", incident_node or client)
+        await edge(n, pa.role or case_vocab.PARTY_FALLBACK_RELATION, incident_node or client)
         if pa.role == "at_fault":
             at_fault_node = n
 
     for p in ex.insurance_policies:
         if p.carrier_name:
             ins = await node("insurer", p.carrier_name, {"kind": p.policy_kind, "limit": p.coverage_limit})
-            subject = client if p.party_role == "claimant" else (at_fault_node or client)
+            subject = client if p.party_role == case_vocab.CLAIMANT_ROLE else (at_fault_node or client)
             await edge(subject, "insured_by", ins, {"limit": p.coverage_limit})
 
     return counts
@@ -120,25 +125,33 @@ def _rrf(rankings: list[list], k: int = 60) -> list:
     return sorted(scores, key=lambda x: scores[x], reverse=True)
 
 
-async def hybrid_search(
-    db: AsyncSession, ctx: IntakeContext, query_embedding: list[float], query_text: str, k: int = 5
+async def hybrid_search_lead(
+    db: AsyncSession, lead_id: uuid.UUID, query_embedding: list[float], query_text: str, k: int = 5
 ) -> list[dict]:
-    """Vector + keyword search fused with RRF, scoped to the current lead (RLS)."""
+    """Vector + keyword search fused with RRF, scoped to a lead (RLS). Channel-agnostic
+    (no IntakeContext) so it's reusable from the voice agent and dashboard chat alike."""
     vec_rows = (await db.execute(
         text("SELECT id, content FROM knowledge_chunks WHERE lead_id = :l "
              "ORDER BY embedding <=> CAST(:q AS halfvec) LIMIT :k"),
-        {"l": ctx.lead_id, "q": _vec(query_embedding), "k": k},
+        {"l": lead_id, "q": _vec(query_embedding), "k": k},
     )).all()
     kw_rows = (await db.execute(
         text("SELECT id, content FROM knowledge_chunks WHERE lead_id = :l "
              "AND content_tsv @@ plainto_tsquery('english', :qt) "
              "ORDER BY ts_rank(content_tsv, plainto_tsquery('english', :qt)) DESC LIMIT :k"),
-        {"l": ctx.lead_id, "qt": query_text, "k": k},
+        {"l": lead_id, "qt": query_text, "k": k},
     )).all()
 
     content_by_id = {r.id: r.content for r in [*vec_rows, *kw_rows]}
     fused = _rrf([[r.id for r in vec_rows], [r.id for r in kw_rows]])
     return [{"id": str(i), "content": content_by_id[i]} for i in fused[:k]]
+
+
+async def hybrid_search(
+    db: AsyncSession, ctx: IntakeContext, query_embedding: list[float], query_text: str, k: int = 5
+) -> list[dict]:
+    """Backward-compatible wrapper (voice IntakeContext)."""
+    return await hybrid_search_lead(db, ctx.lead_id, query_embedding, query_text, k)
 
 
 async def persist_memory(

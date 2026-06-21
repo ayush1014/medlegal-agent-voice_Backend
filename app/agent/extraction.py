@@ -124,12 +124,12 @@ def _prompt() -> str:
 
 
 async def extract_from_transcript(transcript: str) -> Extraction:
-    if not settings.deepseek_api_key:
-        raise RuntimeError("DEEPSEEK_API_KEY is not set")
-    client = AsyncOpenAI(api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url)
+    if not settings.openai_api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set")
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
     try:
         resp = await client.chat.completions.create(
-            model=settings.deepseek_model,
+            model=settings.extraction_model,
             temperature=0,
             response_format={"type": "json_object"},
             messages=[
