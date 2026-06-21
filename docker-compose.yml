@@ -1,0 +1,36 @@
+# MedLegal voice backend. This VPS already runs a host-level Caddy (for the
+# cureforge project), so we do NOT run our own Caddy here — instead the API is
+# published on a loopback port and the host Caddy reverse-proxies our hostname to it.
+#
+#   api    : FastAPI (Twilio webhooks + dashboard API) + the post-call worker loop
+#            (POST_CALL_WORKER_ENABLED). Published on 127.0.0.1:8001 (cureforge uses 8000).
+#   worker : the LiveKit voice agent — connects OUT to LiveKit Cloud; no inbound ports.
+#
+# Host Caddy block to add (see docs/deploy_vps.md):
+#   srv1653148.hstgr.cloud { reverse_proxy 127.0.0.1:8001 }
+#
+# Config/secrets come from .env in this directory.
+
+services:
+  api:
+    build: .
+    image: medlegal-backend
+    restart: unless-stopped
+    env_file: .env
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8000
+      --proxy-headers --forwarded-allow-ips "*"
+    ports:
+      - "127.0.0.1:8001:8000"   # loopback only; host Caddy proxies to this
+
+  worker:
+    build: .
+    image: medlegal-backend
+    restart: unless-stopped
+    env_file: .env
+    command: python -m app.agent.worker start
+    volumes:
+      - livekit-cache:/root/.cache   # persist downloaded VAD/turn-detector models
+
+volumes:
+  livekit-cache:

@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     # ".medlegal.app" so the cookie is shared across firm subdomains.
     cookie_domain: str | None = None
     cookie_secure: bool = False  # set true in prod (HTTPS); HSTS at the edge
+    # "lax" for same-site (local). For a cross-site SPA (frontend on a different
+    # domain, e.g. Vercel) set "none" — REQUIRES cookie_secure=true.
+    cookie_samesite: str = "lax"
     # Base domain used to derive the firm slug from the request host in prod.
     base_domain: str | None = None  # e.g. "medlegal.app"
 

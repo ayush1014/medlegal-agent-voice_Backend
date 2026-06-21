@@ -1,0 +1,6 @@
+# Auto-HTTPS reverse proxy. Caddy fetches a Let's Encrypt cert for PUBLIC_DOMAIN
+# (needs ports 80+443 open and DNS pointing at this VPS). All traffic → the API.
+{$PUBLIC_DOMAIN} {
+	encode gzip
+	reverse_proxy api:8000
+}

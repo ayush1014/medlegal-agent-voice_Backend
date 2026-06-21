@@ -21,7 +21,7 @@ def _common(http_only: bool, max_age: int, path: str) -> dict:
     kwargs = dict(
         httponly=http_only,
         secure=settings.cookie_secure,
-        samesite="lax",
+        samesite=settings.cookie_samesite,
         max_age=max_age,
         path=path,
     )

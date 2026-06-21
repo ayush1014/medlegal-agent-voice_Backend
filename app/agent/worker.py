@@ -175,16 +175,17 @@ async def entrypoint(ctx: JobContext) -> None:
         # and mis-fired even on complete short answers like "My name is Ayush").
         # Raise max_delay toward 2.5 if it starts cutting callers off mid-thought.
         #
-        # Interruption: VAD mode (local) instead of adaptive — adaptive runs a cloud
-        # inference every 100ms WHILE the agent speaks, which both stutters the
-        # worker's outgoing audio and false-fires on phone-line echo/noise (pausing
-        # the agent mid-sentence → the "cut off in the middle"). min_duration +
-        # min_words require sustained real speech before a barge-in counts.
+        # Barge-in DISABLED. On a telephony line the agent's own TTS echoes back and
+        # was being mis-detected as the caller interrupting — cutting the agent off
+        # mid-sentence (worst during slow letter-by-letter spelling, where echoed
+        # letters transcribe as multiple tokens so min_words can't filter them). With
+        # interruptions off, the agent always finishes its (short) turns. Caller audio
+        # during agent speech is BUFFERED, not discarded, so nothing they say is lost.
+        # (To restore barge-in later, add LiveKit telephony noise cancellation so the
+        # agent stops hearing its own echo.)
         turn_handling=TurnHandlingOptions(
             endpointing=EndpointingOptions(min_delay=0.4, max_delay=1.5),
-            interruption=InterruptionOptions(
-                enabled=True, mode="vad", min_duration=0.6, min_words=2
-            ),
+            interruption=InterruptionOptions(enabled=False, discard_audio_if_uninterruptible=False),
         ),
     )
 
