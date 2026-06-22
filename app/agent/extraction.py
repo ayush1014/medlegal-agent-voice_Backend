@@ -166,3 +166,38 @@ async def extract_from_transcript(transcript: str) -> Extraction:
     finally:
         await client.close()
     return Extraction.model_validate_json(resp.choices[0].message.content or "{}")
+
+
+async def merge_summaries(existing: str, new: str) -> str:
+    """Fold a new call's summary into the running case summary (returning caller).
+
+    Preserves every prior fact and adds/updates with the new call — so a follow-up
+    call augments the summary instead of overwriting it. DeepSeek (post-call).
+    """
+    existing, new = (existing or "").strip(), (new or "").strip()
+    if not existing:
+        return new
+    if not new:
+        return existing
+    if not settings.deepseek_api_key:
+        return f"{existing} {new}".strip()  # degrade gracefully: append
+    client = AsyncOpenAI(api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url)
+    try:
+        resp = await client.chat.completions.create(
+            model=settings.deepseek_model,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": (
+                    "You maintain a running case summary for a personal-injury lead across "
+                    "multiple intake calls. Given the EXISTING summary and the NEW call's "
+                    "summary, output ONE updated, neutral summary (2-4 sentences) that "
+                    "PRESERVES all prior facts and folds in anything new or changed. Never "
+                    "drop information. If the new call adds nothing, return the existing "
+                    "summary. State representation status only once. Output only the summary "
+                    "text — no preamble.")},
+                {"role": "user", "content": f"EXISTING SUMMARY:\n{existing}\n\nNEW CALL SUMMARY:\n{new}"},
+            ],
+        )
+    finally:
+        await client.close()
+    return (resp.choices[0].message.content or "").strip() or f"{existing} {new}".strip()

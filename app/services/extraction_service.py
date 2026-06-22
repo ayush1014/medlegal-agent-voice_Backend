@@ -102,14 +102,16 @@ async def persist_extraction(db: AsyncSession, ctx: IntakeContext, ex: Extractio
 
     counts = {"incidents": 0, "injuries": 0, "treatments": 0, "policies": 0, "parties": 0, "damages": 0}
 
+    has_incident = await _exists(db, "SELECT 1 FROM incidents WHERE lead_id=:l", {"l": lead})
     for inc in ex.incidents:
         d = _date(inc.incident_date)
         if d is not None and await _exists(db, "SELECT 1 FROM incidents WHERE lead_id=:l AND incident_date=:d",
                                            {"l": lead, "d": d}):
             continue
-        if d is None and inc.description and await _exists(
-                db, "SELECT 1 FROM incidents WHERE lead_id=:l AND description=:desc",
-                {"l": lead, "desc": inc.description}):
+        # A dateless incident when one already exists is a re-mention on a follow-up call;
+        # an incident with neither a date nor a description is empty. Skip both so a
+        # content-free return call can't spawn a duplicate incident.
+        if d is None and (has_incident or not (inc.description or "").strip()):
             continue
         await db.execute(
             text("INSERT INTO incidents (organization_id, lead_id, incident_date, location_text, "

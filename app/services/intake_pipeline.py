@@ -15,7 +15,7 @@ from sqlalchemy import text
 
 from app.agent.context import IntakeContext
 from app.agent.embeddings import embed_texts
-from app.agent.extraction import extract_from_transcript
+from app.agent.extraction import extract_from_transcript, merge_summaries
 from app.database import session_scope
 from app.security.context import system_context
 from app.services import (
@@ -50,6 +50,20 @@ async def run_post_call_pipeline(
     extraction = await extract_from_transcript(transcript_text)
     chunks = memory_service.chunk_transcript(transcript_text)
     embeddings = await embed_texts(chunks)
+
+    # Cumulative case summary: a returning caller's new summary must MERGE with the
+    # prior one, not overwrite it. Build this call's summary (with the representation
+    # note), read any existing summary, and fold them together — all off the tx.
+    new_summary = (extraction.lead.summary or "").strip()
+    if extraction.lead.has_attorney is not None:
+        new_summary = (f"{new_summary} (Already represented: "
+                       f"{'yes' if extraction.lead.has_attorney else 'no'}.)").strip()
+    async with session_scope(system_context(organization_id)) as db:
+        prior_summary = (await db.execute(
+            text("SELECT ai_summary FROM leads WHERE id=:l"), {"l": lead_id})).scalar_one_or_none()
+    extraction.lead.summary = await merge_summaries((prior_summary or "").strip(), new_summary)
+    # The merged summary already carries the representation note → stop persist re-appending.
+    extraction.lead.has_attorney = None
 
     ctx = IntakeContext(
         organization_id=organization_id, caller_phone=caller_phone or "", lead_id=lead_id
