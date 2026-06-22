@@ -27,6 +27,22 @@ async def _dispose_app_engine():
     await engine.dispose()
 
 
+@pytest_asyncio.fixture(autouse=True)
+def _mock_outbound_sends(monkeypatch):
+    """No test ever hits real Twilio/SMTP. Stub the three send primitives with
+    unique fake ids; a test that asserts a specific send overrides its own mock."""
+    import uuid as _uuid
+
+    from app.services import email_service, messaging_service, sms_service
+
+    monkeypatch.setattr(sms_service, "_twilio_create_message",
+                        lambda f, t, b: ("SM_" + _uuid.uuid4().hex[:10], "queued"), raising=False)
+    monkeypatch.setattr(messaging_service, "_twilio_send",
+                        lambda **kw: ("SM_" + _uuid.uuid4().hex[:10], "queued"), raising=False)
+    monkeypatch.setattr(email_service, "_send_sync",
+                        lambda to, s, b, r: f"<{_uuid.uuid4().hex}@test>", raising=False)
+
+
 @pytest_asyncio.fixture
 async def owner_engine():
     engine = create_async_engine(_build_async_url(settings.database_url))

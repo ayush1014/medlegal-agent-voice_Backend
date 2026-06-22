@@ -52,12 +52,28 @@ async def _post_call_worker() -> None:
         await asyncio.sleep(settings.post_call_interval_seconds)
 
 
+async def _email_inbound_worker() -> None:
+    """Ingest client document replies from the firm inbox (Gmail IMAP)."""
+    from app.jobs.email_inbound import poll_inbound
+
+    while True:
+        try:
+            res = await poll_inbound()
+            if res.get("emails") or res.get("files"):
+                logger.info("email inbound tick: %s", res)
+        except Exception:  # noqa: BLE001 - a bad tick must not kill the loop
+            logger.exception("email inbound tick failed")
+        await asyncio.sleep(settings.email_poll_seconds)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup / shutdown hooks."""
     tasks: list[asyncio.Task] = []
     if settings.post_call_worker_enabled:
         tasks.append(asyncio.create_task(_post_call_worker()))
+    if settings.email_inbound_enabled and settings.email_enabled:
+        tasks.append(asyncio.create_task(_email_inbound_worker()))
     if settings.followups_scheduler_enabled:
         tasks.append(asyncio.create_task(_followups_scheduler()))
     yield

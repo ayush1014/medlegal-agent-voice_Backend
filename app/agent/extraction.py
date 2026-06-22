@@ -29,6 +29,11 @@ class ExtractedLead(_Base):
     full_name: str | None = None
     date_of_birth: str | None = None  # YYYY-MM-DD; verifies returning callers
     email: str | None = None
+    address: str | None = None
+    occupation: str | None = None
+    employer: str | None = None
+    employment_status: str | None = None  # e.g. employed / self-employed / unemployed / retired / student
+    annual_income: float | None = None
     case_type: str | None = None
     preferred_contact_method: str | None = None
     best_time_to_contact: str | None = None
@@ -102,7 +107,8 @@ def _prompt() -> str:
         "YYYY-MM-DD. Amounts as plain numbers.\n\n"
         "JSON shape:\n"
         "{\n"
-        '  "lead": {"full_name","date_of_birth"(YYYY-MM-DD if stated),"email","case_type",'
+        '  "lead": {"full_name","date_of_birth"(YYYY-MM-DD if stated),"email","address",'
+        '"occupation","employer","employment_status","annual_income"(number),"case_type",'
         '"preferred_contact_method","best_time_to_contact","has_attorney"(bool),'
         '"summary"(2-3 sentence neutral case summary)},\n'
         '  "incidents": [{"incident_date","location_text","description",'

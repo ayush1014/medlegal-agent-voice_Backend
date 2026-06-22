@@ -85,6 +85,18 @@ class Settings(BaseSettings):
     whatsapp_template_retainer: str | None = None       # vars: 1=firm 2=link
     whatsapp_template_nudge: str | None = None          # vars: 1=firm
 
+    # --- Email (MVP doc-intake + retainer via Gmail SMTP/IMAP) -----------
+    # When set, document requests + retainers go by EMAIL (clients reply with their
+    # files; an IMAP poller ingests attachments → GCS). Use a Gmail App Password.
+    gmail_user: str | None = None
+    gmail_app_password: str | None = None
+    gmail_from_name: str = "medLegal"
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    imap_host: str = "imap.gmail.com"
+    email_poll_seconds: int = 60          # inbound IMAP poll cadence
+    email_inbound_enabled: bool = True    # run the inbound poller (needs gmail creds)
+
     # --- Rate limiting (abuse / SMS-bomb / toll-fraud guards) -------------
     otp_max_per_phone_per_hour: int = 5
     otp_max_per_ip_per_hour: int = 30
@@ -159,6 +171,11 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment.lower() == "production"
+
+    @property
+    def email_enabled(self) -> bool:
+        """True when Gmail SMTP/IMAP credentials are configured."""
+        return bool(self.gmail_user and self.gmail_app_password)
 
     @property
     def rls_enforced(self) -> bool:

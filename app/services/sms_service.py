@@ -107,13 +107,15 @@ async def send_callback_sms(organization_id: uuid.UUID, lead_id: uuid.UUID, to_e
     return await send_sms(organization_id, lead_id, to_e164, body, purpose="follow_up")
 
 
-async def send_welcome_sms(organization_id: uuid.UUID, lead_id: uuid.UUID, to_e164: str) -> str | None:
-    """After a completed intake — invite the caller to the portal. Tapping the
-    link + an OTP claims their case via the existing PRD-1 path (no re-entry)."""
+async def send_welcome_sms(
+    organization_id: uuid.UUID, lead_id: uuid.UUID, to_e164: str, *, email: str | None = None
+) -> str | None:
+    """After a completed intake — invite the caller to the portal and tell them the
+    document/agreement follow-up comes by EMAIL (our doc-intake channel)."""
     link = _portal_link()
-    body = (
-        "Thanks for calling medLegal — your case has been started. "
-        + (f"Track its status and upload documents here: {link}"
-           if link else "We'll text you a secure link to your case shortly.")
-    )
+    body = "Thanks for calling medLegal — your case has been started. "
+    if email:
+        body += f"We'll email the documents we need to {email}. "
+    body += (f"Track its status here: {link}" if link
+             else "We'll text you a secure link to your case shortly.")
     return await send_sms(organization_id, lead_id, to_e164, body, purpose="general")

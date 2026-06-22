@@ -76,3 +76,29 @@ async def test_extraction_dedup_on_repeat(org, owner_engine):
         n_inc = (await c.execute(text("SELECT count(*) FROM incidents WHERE lead_id=:l"), {"l": lead_id})).scalar_one()
         n_tx = (await c.execute(text("SELECT count(*) FROM medical_treatments WHERE lead_id=:l"), {"l": lead_id})).scalar_one()
     assert n_inj == 1 and n_inc == 1 and n_tx == 1  # not duplicated on the repeat call
+
+
+async def test_profile_fields_persist(org, owner_engine):
+    """Phase 1: email, DOB, address, employment + income land on the lead."""
+    lead_id = uuid.uuid4()
+    async with owner_engine.begin() as c:
+        await c.execute(text("INSERT INTO leads (id,organization_id,full_name,phone,case_type,source) "
+                             "VALUES (:i,:o,'Caller','+15550009999','Other Personal Injury','inbound_call')"),
+                        {"i": lead_id, "o": org})
+    ctx = IntakeContext(organization_id=org, caller_phone="+15550009999", lead_id=lead_id)
+    ex = Extraction(lead=ExtractedLead(
+        full_name="Jane Roe", date_of_birth="1990-06-05", email="JANE@Example.com",
+        address="12 Oak St, Austin TX", occupation="Nurse", employer="City Hospital",
+        employment_status="employed", annual_income=72000, case_type="Auto Accident"))
+    async with session_scope(system_context(org)) as db:
+        await extraction_service.persist_extraction(db, ctx, ex)
+
+    async with owner_engine.begin() as c:
+        r = (await c.execute(text("SELECT full_name,date_of_birth,email,address,occupation,employer,"
+                                  "employment_status,annual_income FROM leads WHERE id=:l"),
+                             {"l": lead_id})).mappings().first()
+    assert r["full_name"] == "Jane Roe" and str(r["date_of_birth"]) == "1990-06-05"
+    assert r["email"] == "jane@example.com"  # normalized lowercase
+    assert r["address"] == "12 Oak St, Austin TX"
+    assert r["occupation"] == "Nurse" and r["employer"] == "City Hospital"
+    assert r["employment_status"] == "employed" and float(r["annual_income"]) == 72000.0

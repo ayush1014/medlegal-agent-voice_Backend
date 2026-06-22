@@ -22,6 +22,7 @@ class IntakeContext:
     known_name: str | None = None
 
     # Live flags the tools/detector raise during the call.
+    verified: bool = False  # returning caller passed the name + DOB identity check
     emergency: bool = False
     already_represented: bool = False
     ended: bool = False

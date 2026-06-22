@@ -25,6 +25,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
+from datetime import date as _date
+
+from sqlalchemy import text
 
 from livekit.agents import (
     Agent,
@@ -52,6 +56,15 @@ from app.services.context_service import ContextPack
 
 # Deepgram Aura 2 voice (English-only for v1).
 _TTS_VOICE = "aura-2-asteria-en"
+
+
+def _names_match(spoken: str, stored: str | None) -> bool:
+    """Loose name match for identity verification — one name's tokens a subset of
+    the other's (handles middle names, ordering, punctuation)."""
+    def toks(s: str | None) -> set[str]:
+        return {t for t in re.sub(r"[^a-z ]", " ", (s or "").lower()).split() if t}
+    a, b = toks(spoken), toks(stored)
+    return bool(a and b and (a <= b or b <= a))
 
 
 def _greeting_for(ctx: IntakeContext, pack: ContextPack) -> str:
@@ -157,6 +170,30 @@ async def entrypoint(ctx: JobContext) -> None:
         intake_ctx.end_reason = reason
         return "Acknowledged — give a short, warm goodbye."
 
+    @function_tool
+    async def verify_caller(full_name: str, date_of_birth: str) -> str:
+        """Verify a RETURNING caller's identity against the record BEFORE discussing
+        their existing case. Pass the caller's stated full name and date of birth
+        normalized as YYYY-MM-DD. Returns whether they match the file."""
+        try:
+            async with session_scope(system_context(intake_ctx.organization_id)) as db:
+                row = (await db.execute(
+                    text("SELECT full_name, date_of_birth FROM leads WHERE id = :l"),
+                    {"l": intake_ctx.lead_id})).first()
+        except Exception:  # noqa: BLE001 - never break the call on a lookup hiccup
+            return "Couldn't check the record right now — continue and collect their details."
+        if row is None or row.date_of_birth is None:
+            return "No identity on file to verify — proceed with intake as usual."
+        try:
+            spoken = _date.fromisoformat(date_of_birth.strip())
+        except (ValueError, AttributeError):
+            return "That date wasn't clear — ask them to repeat their date of birth."
+        if _names_match(full_name, row.full_name) and spoken == row.date_of_birth:
+            intake_ctx.verified = True
+            return "VERIFIED — identity confirmed. You may continue with their case."
+        return ("NOT a match. Ask once more; if it still doesn't match, warmly acknowledge "
+                "you couldn't verify and continue WITHOUT sharing any prior case details.")
+
     session = AgentSession(
         # no_delay + tighter endpointing = faster end-of-speech → lower turn latency.
         stt=deepgram.STT(
@@ -247,7 +284,11 @@ async def entrypoint(ctx: JobContext) -> None:
     block = pack.to_prompt()  # Hybrid RAG + KG memory briefing (or "" for a brand-new caller)
     if block:
         instructions += "\n\n" + block
-    agent = Agent(instructions=instructions, tools=[flag_emergency, end_intake])
+    # verify_caller only for returning callers (new callers have nothing to verify).
+    tools = [flag_emergency, end_intake]
+    if intake_ctx.returning:
+        tools.append(verify_caller)
+    agent = Agent(instructions=instructions, tools=tools)
     # Prompt size drives prefill latency on every turn — log it once so we can see the cost.
     logger.info("⏱ system prompt = %d chars (~%d tokens), returning=%s, memory_block=%d chars",
                 len(instructions), len(instructions) // 4, intake_ctx.returning, len(block))

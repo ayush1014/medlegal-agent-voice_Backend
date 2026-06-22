@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import session_scope
 from app.security.context import system_context
-from app.services import messaging_service, short_links
+from app.services import email_service, messaging_service, short_links
 
 # Sensible default asks per case type (subset of REQUESTABLE_DOCUMENTS).
 _DEFAULT_DOCS = {
@@ -67,12 +67,15 @@ async def request_documents(
     doc_types: list[str] | None = None, *, channel: str | None = None,
 ) -> dict:
     """Create document requests and send the client an ask + upload link."""
-    channel = channel or settings.funnel_channel
     async with session_scope(system_context(organization_id)) as db:
         row = (await db.execute(
-            text("SELECT case_type, phone FROM leads WHERE id=:l"), {"l": lead_id})).first()
+            text("SELECT case_type, phone, email FROM leads WHERE id=:l"), {"l": lead_id})).first()
         case_type = row.case_type if row else None
         to_e164 = to_e164 or (row.phone if row else None)
+        email = row.email if row else None
+        # Prefer EMAIL (our doc-intake channel) when we have an address; else SMS/WhatsApp.
+        if channel is None:
+            channel = "email" if (email and settings.email_enabled) else settings.funnel_channel
         docs = doc_types or default_docs_for(case_type or "_default")
         created = 0
         for dt in docs:
@@ -88,25 +91,39 @@ async def request_documents(
                 {"o": organization_id, "l": lead_id, "dt": dt, "ch": channel},
             )
             created += 1
-        await _recompute_missing(db, lead_id)
+        # Keep outstanding requests' channel in sync with how we're actually sending.
+        await db.execute(
+            text("UPDATE document_requests SET requested_via=:ch WHERE lead_id=:l "
+                 "AND status NOT IN ('Received','Waived')"), {"ch": channel, "l": lead_id})
+        missing = await _recompute_missing(db, lead_id)
 
     link = await upload_link(organization_id, lead_id)
     checklist = ", ".join(docs)
-    body = f"Hi, it's medLegal. To move your case forward we need a few documents: {checklist}."
-    if link:
-        body += f" Upload them securely here: {link}"
-    # In-chat photo replies only work on WhatsApp; SMS uses the link only.
-    if channel == "whatsapp":
-        body += " — or just reply to this message with photos."
-    # Only message when there's something new to ask for (avoids duplicate sends
-    # on an accidental double-click; nudges handle reminders).
-    if to_e164 and created > 0:
+    # Send whenever there are outstanding (not-yet-received) asks — so a deliberate
+    # "Request Documents" click always (re)sends the email, and the auto post-call
+    # request fires once. (Nudges are a separate reminder path.)
+    if missing > 0 and channel == "email" and email:
+        body = (
+            "Hi, this is medLegal. To move your case forward, please send us these documents:\n\n"
+            f"{checklist}.\n\nJust reply to this email with the photos or PDFs attached"
+            + (f", or upload them securely here: {link}" if link else "")
+            + ".\n\nThank you,\nThe medLegal team"
+        )
+        await email_service.send_email(
+            organization_id, lead_id, email, "Documents needed for your case", body,
+            purpose="doc_request")
+    elif missing > 0 and to_e164:
+        body = f"Hi, it's medLegal. To move your case forward we need a few documents: {checklist}."
+        if link:
+            body += f" Upload them securely here: {link}"
+        if channel == "whatsapp":  # in-chat photo replies only work on WhatsApp
+            body += " — or just reply to this message with photos."
         await messaging_service.send_message(
             organization_id, lead_id, to_e164, body=body, channel=channel, purpose="doc_request",
             content_sid=settings.whatsapp_template_doc_request,
             content_vars={"1": "medLegal", "2": checklist, "3": link},
         )
-    return {"requested": docs, "created": created, "link": link}
+    return {"requested": docs, "created": created, "missing": missing, "link": link, "channel": channel}
 
 
 async def record_upload(

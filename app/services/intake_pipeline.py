@@ -8,7 +8,10 @@ happen outside the DB transaction; all persistence is one atomic tx.
 
 from __future__ import annotations
 
+import logging
 import uuid
+
+from sqlalchemy import text
 
 from app.agent.context import IntakeContext
 from app.agent.embeddings import embed_texts
@@ -17,6 +20,7 @@ from app.database import session_scope
 from app.security.context import system_context
 from app.services import (
     cost_service,
+    document_service,
     extraction_service,
     lead_intelligence,  # noqa: F401 - registers the intake.completed handler
     memory_service,
@@ -24,6 +28,8 @@ from app.services import (
     outbox_service,
     sms_service,
 )
+
+logger = logging.getLogger("medlegal.intake_pipeline")
 
 
 def _agent_chars(transcript: str) -> int:
@@ -81,6 +87,20 @@ async def run_post_call_pipeline(
 
     # --- Welcome SMS → reuses the PRD-1 claim path on tap (network) ---
     if caller_phone:
-        await sms_service.send_welcome_sms(organization_id, lead_id, caller_phone)
+        await sms_service.send_welcome_sms(
+            organization_id, lead_id, caller_phone, email=extraction.lead.email
+        )
+
+    # --- Auto document request (email when we have one) for pursuable leads ---
+    # Scoring set the pipeline above; skip clearly-rejected leads. request_documents
+    # picks the channel (email if the lead has an address) and sends the checklist.
+    try:
+        async with session_scope(system_context(organization_id)) as db:
+            pipeline = (await db.execute(
+                text("SELECT pipeline_status FROM leads WHERE id=:l"), {"l": lead_id})).scalar_one_or_none()
+        if pipeline and pipeline != "Rejected":
+            await document_service.request_documents(organization_id, lead_id)
+    except Exception:  # noqa: BLE001 - never break teardown; can be re-requested manually
+        logger.exception("auto doc-request failed for lead %s", lead_id)
 
     return {"extraction": counts, "chunks": n_chunks, "graph": graph, "cost": cost}

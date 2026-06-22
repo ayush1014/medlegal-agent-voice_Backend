@@ -17,6 +17,11 @@ from app.agent.context import IntakeContext
 _PARTIAL_LEAD_FIELDS = {
     "full_name",
     "email",
+    "address",
+    "occupation",
+    "employer",
+    "employment_status",
+    "annual_income",
     "case_type",
     "preferred_contact_method",
     "best_time_to_contact",

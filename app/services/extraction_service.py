@@ -65,6 +65,16 @@ async def persist_extraction(db: AsyncSession, ctx: IntakeContext, ex: Extractio
         fields["full_name"] = ex.lead.full_name.strip()
     if ex.lead.email:
         fields["email"] = ex.lead.email.strip().lower()
+    if ex.lead.address:
+        fields["address"] = ex.lead.address.strip()
+    if ex.lead.occupation:
+        fields["occupation"] = ex.lead.occupation.strip()
+    if ex.lead.employer:
+        fields["employer"] = ex.lead.employer.strip()
+    if ex.lead.employment_status:
+        fields["employment_status"] = ex.lead.employment_status.strip()
+    if ex.lead.annual_income is not None:
+        fields["annual_income"] = ex.lead.annual_income
     if ex.lead.case_type:
         fields["case_type"] = _one_of(ex.lead.case_type, CASE_TYPES, "Other Personal Injury")
     if ex.lead.preferred_contact_method:

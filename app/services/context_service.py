@@ -529,7 +529,11 @@ def _render_recap(pack: ContextPack) -> str:
         "",
         "HOW TO USE THIS MEMORY ON THIS CALL",
         f"- Greet warmly and by first name ({first}) like you remember them.",
-        f"- Before any case details, lightly confirm identity for privacy: {_privacy_line(a)}. Wait for confirmation before referencing specifics.",
+        "- IDENTITY CHECK FIRST (privacy): before sharing ANY case details, verify who you're "
+        "speaking with — ask their full name AND date of birth, then call the verify_caller tool "
+        "(pass the date as YYYY-MM-DD). Only discuss their case after it returns VERIFIED. If it's "
+        "not a match after two tries, warmly acknowledge you couldn't verify and continue as a fresh "
+        "intake — do NOT read back any prior case details.",
         "- Reference what you know NATURALLY and SPARINGLY — at most one or two specifics; never read this list back at them.",
         "- NEVER re-ask anything marked [known]. If they volunteer it again, acknowledge and move on.",
         "- Items marked [unconfirmed] are things you believe but aren't sure of — raise softly and let them correct you.",

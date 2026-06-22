@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import session_scope
 from app.security.context import system_context
 from app.config import settings
-from app.services import document_service, messaging_service, short_links
+from app.services import document_service, email_service, messaging_service, short_links
 
 _ESIGN_PROVIDER = "internal_mock"
 
@@ -45,7 +45,8 @@ async def prepare_and_send(
 ) -> dict:
     async with session_scope(system_context(organization_id)) as db:
         lead = (await db.execute(
-            text("SELECT full_name, phone, case_type FROM leads WHERE id=:l"), {"l": lead_id})).first()
+            text("SELECT full_name, phone, case_type, email FROM leads WHERE id=:l"),
+            {"l": lead_id})).first()
         firm = (await db.execute(
             text("SELECT name FROM organizations WHERE id=:o"), {"o": organization_id})).scalar_one_or_none()
         if lead is None:
@@ -76,16 +77,27 @@ async def prepare_and_send(
         )
 
     link = await sign_link(organization_id, lead_id)
-    body = "Great news from medLegal — your representation agreement is ready."
-    if link:
-        body += f" Please review and sign it here: {link}"
-    body += " Reply with any questions."
-    if to_e164:
+    channel = "email" if (lead.email and settings.email_enabled) else settings.funnel_channel
+    if lead.email and settings.email_enabled:
+        body = (
+            "Great news from medLegal — your representation agreement (Letter of Representation) "
+            "is ready.\n\n"
+            + (f"Please review and sign it here:\n{link}\n\n" if link else "")
+            + "Reply to this email with any questions.\n\nThank you,\nThe medLegal team"
+        )
+        await email_service.send_email(
+            organization_id, lead_id, lead.email, "Your representation agreement is ready to sign",
+            body, purpose="retainer")
+    elif to_e164:
+        body = "Great news from medLegal — your representation agreement is ready."
+        if link:
+            body += f" Please review and sign it here: {link}"
+        body += " Reply with any questions."
         await messaging_service.send_message(
             organization_id, lead_id, to_e164, body=body, channel=settings.funnel_channel,
             purpose="retainer", content_sid=settings.whatsapp_template_retainer,
             content_vars={"1": "medLegal", "2": link})
-    return {"retainer_id": str(row), "link": link}
+    return {"retainer_id": str(row), "link": link, "channel": channel}
 
 
 async def record_event(

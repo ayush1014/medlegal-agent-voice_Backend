@@ -52,6 +52,13 @@ class Lead(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     best_time_to_contact: Mapped[str | None] = mapped_column(String(64))
     # Captured at intake; used to verify a returning caller (name + DOB).
     date_of_birth: Mapped[date | None] = mapped_column(Date)
+    address: Mapped[str | None] = mapped_column(String(512))
+
+    # --- Work & income (feeds lost-earnings in settlement) ---
+    occupation: Mapped[str | None] = mapped_column(String(255))
+    employer: Mapped[str | None] = mapped_column(String(255))
+    employment_status: Mapped[str | None] = mapped_column(String(64))
+    annual_income: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
 
     # --- Case header (denormalized for fast lists) ---
     case_type: Mapped[str] = mapped_column(String(40), nullable=False)
