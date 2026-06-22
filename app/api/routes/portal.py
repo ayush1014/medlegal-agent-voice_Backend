@@ -19,10 +19,11 @@ router = APIRouter(prefix="/portal", tags=["portal"])
 
 async def _my_lead(db: AsyncSession):
     """The caller's own lead (RLS scopes a client to their lead)."""
+    # Client-safe fields only — never expose internal scoring/qualification/settlement value.
     return (await db.execute(
-        text("SELECT id, organization_id, full_name, phone, case_type, pipeline_status, "
-             "qualification_status, retainer_status, settlement_expected, missing_documents, "
-             "ai_summary, updated_at FROM leads WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 1")
+        text("SELECT id, organization_id, full_name, phone, email, case_type, pipeline_status, "
+             "retainer_status, missing_documents, ai_summary, updated_at "
+             "FROM leads WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 1")
     )).first()
 
 
@@ -47,8 +48,16 @@ async def my_case(db: AsyncSession = Depends(get_client_db)) -> dict:
         ret = (await sdb.execute(
             text("SELECT status, sent_at, viewed_at, signed_at FROM retainers WHERE lead_id=:l "
                  "AND deleted_at IS NULL LIMIT 1"), {"l": lead_id})).first()
+        inc = (await sdb.execute(
+            text("SELECT incident_date, location_text, description FROM incidents WHERE lead_id=:l "
+                 "ORDER BY created_at LIMIT 1"), {"l": lead_id})).first()
+        injuries = _rows(await sdb.execute(
+            text("SELECT body_part, severity, is_permanent, requires_surgery FROM injuries "
+                 "WHERE lead_id=:l ORDER BY created_at"), {"l": lead_id}))
     return {
         "lead": dict(lead._mapping),
+        "incident": dict(inc._mapping) if inc else None,
+        "injuries": injuries,
         "document_requests": reqs,
         "documents": docs,
         "retainer": dict(ret._mapping) if ret else None,
