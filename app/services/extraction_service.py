@@ -26,7 +26,7 @@ from app.models.enums import (
     POLICY_PARTY_ROLES,
 )
 from app.security.context import system_context
-from app.services import intake_service
+from app.services import intake_service, jurisdiction
 
 
 def _date(s: str | None) -> date | None:
@@ -83,10 +83,13 @@ async def persist_extraction(db: AsyncSession, ctx: IntakeContext, ex: Extractio
         fields["best_time_to_contact"] = ex.lead.best_time_to_contact
 
     summary = (ex.lead.summary or "").strip()
-    if ex.lead.has_attorney is not None:
-        summary = (summary + f" (Already represented: {'yes' if ex.lead.has_attorney else 'no'}.)").strip()
     if summary:
         fields["ai_summary"] = summary
+    # Persist representation as structured state (latest call wins) so the funnel reads
+    # it authoritatively instead of a sticky ai_summary substring. The human-readable
+    # "(Already represented: …)" note is folded into the summary upstream (intake_pipeline).
+    if ex.lead.has_attorney is not None:
+        fields["has_attorney"] = ex.lead.has_attorney
 
     await intake_service.update_partial_lead(db, ctx, fields)
     await db.execute(
@@ -102,22 +105,27 @@ async def persist_extraction(db: AsyncSession, ctx: IntakeContext, ex: Extractio
 
     counts = {"incidents": 0, "injuries": 0, "treatments": 0, "policies": 0, "parties": 0, "damages": 0}
 
-    has_incident = await _exists(db, "SELECT 1 FROM incidents WHERE lead_id=:l", {"l": lead})
     for inc in ex.incidents:
         d = _date(inc.incident_date)
         if d is not None and await _exists(db, "SELECT 1 FROM incidents WHERE lead_id=:l AND incident_date=:d",
                                            {"l": lead, "d": d}):
             continue
-        # A dateless incident when one already exists is a re-mention on a follow-up call;
-        # an incident with neither a date nor a description is empty. Skip both so a
-        # content-free return call can't spawn a duplicate incident.
-        if d is None and (has_incident or not (inc.description or "").strip()):
-            continue
+        # A dateless incident: skip if it has no description (empty), or a same-description
+        # incident already exists (a re-mention on a follow-up call) — but keep a genuinely
+        # new, distinct one. Content-match dedup, consistent with the other child tables.
+        desc = (inc.description or "").strip()
+        if d is None:
+            if not desc:
+                continue
+            if await _exists(db, "SELECT 1 FROM incidents WHERE lead_id=:l AND lower(description)=lower(:desc)",
+                             {"l": lead, "desc": desc}):
+                continue
         await db.execute(
             text("INSERT INTO incidents (organization_id, lead_id, incident_date, location_text, "
-                 "description, police_report_available, fault_narrative, comparative_negligence_pct) "
-                 "VALUES (:o,:l,:d,:loc,:desc,:pr,:fn,:cn)"),
+                 "incident_state, description, police_report_available, fault_narrative, "
+                 "comparative_negligence_pct) VALUES (:o,:l,:d,:loc,:st,:desc,:pr,:fn,:cn)"),
             {"o": org, "l": lead, "d": d, "loc": inc.location_text,
+             "st": jurisdiction.normalize_state(inc.incident_state),
              "desc": inc.description, "pr": inc.police_report_available, "fn": inc.fault_narrative,
              "cn": inc.comparative_negligence_pct},
         )

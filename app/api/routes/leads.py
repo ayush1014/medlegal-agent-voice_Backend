@@ -110,7 +110,7 @@ async def lead_detail(lead_id: uuid.UUID, db: AsyncSession = Depends(get_staff_d
     # Profile fields the list query omits but the case file should show.
     prof = (await db.execute(text(
         "SELECT date_of_birth, address, occupation, employer, employment_status, annual_income, "
-        "preferred_contact_method, best_time_to_contact FROM leads WHERE id=:id"), p)).first()
+        "preferred_contact_method, best_time_to_contact, case_brief FROM leads WHERE id=:id"), p)).first()
     if prof is not None:
         lead.update(dict(prof._mapping))
     return {

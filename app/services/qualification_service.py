@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from app.services import jurisdiction
 from app.services.lead_facts import Facts, derive, has_attorney_flag, sol_signal
 
 _DEATH_WORDS = ("death", "died", "passed away", "deceased", "killed", "fatal")
@@ -41,8 +42,9 @@ def _liability_points(f: Facts, d: dict) -> int:
 def qualify(f: Facts, today: date | None = None) -> dict:
     today = today or date.today()
     d = derive(f)
-    sol = sol_signal(f.incident_date, today, f.case_type)
+    sol = sol_signal(f.incident_date, today, f.case_type, f.incident_state)
     comp = f.comparative_negligence_pct
+    bar = jurisdiction.comparative_bar(f.incident_state, comp)
     is_wd = f.case_type == "Wrongful Death"
 
     def out(status: str, reason: str, hard_block: bool) -> dict:
@@ -97,11 +99,20 @@ def qualify(f: Facts, today: date | None = None) -> dict:
                    "The incident date is missing, so the statute of limitations cannot be assessed — "
                    "confirm the date before qualifying.", False)
 
+    # 7b. Comparative fault may bar recovery under the incident state's regime. The intake
+    # fault % is a rough estimate, so route to review — never auto-reject on it.
+    if comp is not None and bar["barred"]:
+        return out("Needs Review",
+                   f"Reported comparative fault ({comp}%) may bar recovery under the "
+                   f"{bar['regime'].replace('_', ' ')} rule for the incident state — verify the "
+                   "fault split with an attorney before advancing; never reject on an intake "
+                   "estimate alone.", False)
+
     # 8-10. Scored resolution. A "qualifying" injury is meaningful (Moderate+),
     # or any surgery/permanency — minor-only falls to Possibly Qualified (rule 9).
     liability_clear = _liability_points(f, d) >= 3
     has_real_injury = d["n_injuries"] > 0 and (d["max_sev"] >= 2 or d["any_permanent"] or d["any_surgery"])
-    comp_ok = comp is None or comp < 50
+    comp_ok = not bar["barred"]
 
     if liability_clear and has_real_injury and d["treatment_backbone"] and comp_ok and sol == "fresh":
         return out("Qualified",

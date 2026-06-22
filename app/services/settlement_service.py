@@ -12,11 +12,20 @@ from __future__ import annotations
 from datetime import date
 
 from app.config import settings
+from app.services import jurisdiction
 from app.services.lead_facts import Facts, derive
 
 # Pain-multiplier band midpoints by worst injury rank.
 _PM_MID = {0: 0.0, 1: 1.5, 2: 2.625, 3: 4.0, 4: 6.25}
 _BANDS = ["Low", "Medium", "High"]
+
+# Severity-anchored general-damages (pain & suffering) floor, used when specials aren't
+# documented yet so a treated, genuinely-injured client isn't valued at ~$0 on the first
+# call. Conservative priors keyed by worst injury rank; inert once real specials push
+# general above them. Tunable — calibration against firm outcomes will refine these.
+_GENERAL_FLOOR = {0: 0.0, 1: 0.0, 2: 7_500.0, 3: 30_000.0, 4: 75_000.0}
+_SURGERY_FLOOR_BUMP = 15_000.0
+_WD_FLOOR = 75_000.0  # wrongful death: top-tier provisional floor (always Low confidence)
 
 
 def _round_money(v: float) -> float:
@@ -95,16 +104,31 @@ def estimate(
     elif no_injuries or no_treatment:
         general *= 0.25
 
-    # A5 comparative fault (single source of truth).
+    # A4b severity floor — a treated, genuinely-injured client (or a wrongful death) must
+    # not value at ~$0 just because specials aren't documented yet. Conservative prior,
+    # inert once real specials push general above it. Requires treatment (no floor for an
+    # untreated injury); wrongful death gets the top floor regardless of injury rows.
+    severity_floor = _GENERAL_FLOOR.get(d["max_sev"], 0.0)
+    if d["any_surgery"]:
+        severity_floor += _SURGERY_FLOOR_BUMP
+    if f.case_type == "Wrongful Death":
+        severity_floor = max(severity_floor, _WD_FLOOR)
+    floor_eligible = (n_inj > 0 and not no_treatment) or f.case_type == "Wrongful Death"
+    floor_applied = floor_eligible and severity_floor > general
+    if floor_applied:
+        general = severity_floor
+
+    # A5 comparative fault — state-aware regime (single source of truth). The regime's
+    # recovery factor is (100-pct)/100 when not barred, and 0 when the plaintiff's fault
+    # bars recovery (contributory at any fault; modified at/over the threshold; pure never).
     comp = f.comparative_negligence_pct
     pct = max(0, min(100, comp if comp is not None else 0))
+    bar = jurisdiction.comparative_bar(f.incident_state, comp)
     unknown_haircut = 0.90 if comp is None else 1.0
     gross = eligible_specials + general + property_d + other_d
-    net = gross * (100 - pct) / 100 * unknown_haircut
-    if pct >= 51:
-        net *= 0.5
+    net = gross * bar["factor"] * unknown_haircut
     gap = _first_treatment_gap_days(f)
-    if no_treatment:
+    if no_treatment and not floor_applied:
         net *= 0.25
     elif gap is not None and gap > 90:
         net *= 0.85
@@ -123,8 +147,10 @@ def estimate(
             coverage_binding = net > available
             expected_base = min(net, available)
     else:
-        # Unknown coverage: soft ceiling at 3x specials so we never project a fantasy.
-        expected_base = min(net, eligible_specials * 3.0)
+        # Unknown coverage: soft ceiling at 3x specials so we never project a fantasy —
+        # but never below a severity-floored general, or the floor would be cancelled out.
+        soft_ceiling = max(eligible_specials * 3.0, general) if floor_applied else eligible_specials * 3.0
+        expected_base = min(net, soft_ceiling)
         coverage_binding = False
 
     expected = expected_base
@@ -143,7 +169,8 @@ def estimate(
         high = min(high_raw, available)
         low = low_raw
     else:
-        high = min(high_raw, eligible_specials * 3.0)
+        high_ceiling = max(eligible_specials * 3.0, general * 1.7) if floor_applied else eligible_specials * 3.0
+        high = min(high_raw, high_ceiling)
         low = low_raw
 
     low, expected, high = _round_money(low), _round_money(expected), _round_money(high)
@@ -167,12 +194,22 @@ def estimate(
         band = "Low"
     if comp is None:
         band = cap_band(band, "Medium")
+    if floor_applied:
+        band = cap_band(band, "Medium")  # severity-floored value is a prior, not evidence
+    if floor_applied and f.case_type == "Wrongful Death":
+        band = "Low"
+    if bar["barred"]:
+        band = "Low"  # likely barred under the state's rule, but the fault % is unverified
 
     pm_eff = max(0.0, min(8.0, pm))
     reasoning = (
         f"Specials ${eligible_specials:,.0f} x pain multiplier {pm_eff:.2f} = general "
         f"${general:,.0f}; comparative fault {pct}%"
         + ("" if comp is not None else " (unverified, -10%)")
+        + (f"; {bar['regime'].replace('_', ' ')} rule BARS recovery at this fault — verify"
+           if bar["barred"] else "")
+        + ("; general anchored on a severity baseline (specials not yet documented — provisional)"
+           if floor_applied else "")
         + (f"; capped by ${available:,.0f} available coverage" if coverage_known and coverage_binding
            else "; coverage unknown (soft ceiling)" if not coverage_known else "")
         + f". Expected ${expected:,.0f} (confidence {band})."
@@ -182,6 +219,7 @@ def estimate(
         "comparative_pct": pct, "unknown_fault_haircut": unknown_haircut, "net_after_fault": net,
         "available_coverage": available, "coverage_known": coverage_known,
         "coverage_binding": coverage_binding, "completeness": completeness,
+        "floor_applied": floor_applied, "severity_floor": severity_floor,
     }
 
     result = {"low": low, "expected": expected, "high": high, "confidence": band,

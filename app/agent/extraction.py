@@ -7,6 +7,8 @@ here — server-side normalization happens in extraction_service before any DB w
 
 from __future__ import annotations
 
+import json
+
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -44,6 +46,7 @@ class ExtractedLead(_Base):
 class ExtractedIncident(_Base):
     incident_date: str | None = None
     location_text: str | None = None
+    incident_state: str | None = None  # 2-letter US state code (jurisdiction)
     description: str | None = None
     police_report_available: bool | None = None
     fault_narrative: str | None = None
@@ -123,15 +126,27 @@ def _prompt() -> str:
         "is_ongoing=true when treatment continues; set injuries.requires_surgery / "
         "is_permanent when indicated.\n"
         "- INJURIES: capture each body part with severity; loss of function, severe pain, or "
-        "inability to use a limb should be reflected in severity/description.\n\n"
+        "inability to use a limb should be reflected in severity/description.\n"
+        "- INSURANCE / COVERAGE: capture EVERY policy mentioned as a separate insurance_policies "
+        "entry — the at-fault party's liability coverage AND the client's OWN coverage "
+        "(uninsured/underinsured motorist 'UM'/'UIM', 'MedPay', or PIP/no-fault). Set party_role "
+        "('claimant' for the client's own policy, 'at_fault' for the other side), carrier_name, "
+        "policy_kind, coverage_limit (number if stated), and claim_number. Record the client's own "
+        "auto policy even when limits are unknown — it is the recovery path when the at-fault party "
+        "is uninsured, unknown, or fled.\n"
+        "- JURISDICTION: put the CITY AND STATE the incident happened in into the incident's "
+        "location_text AND set incident_state to the 2-letter US state code, e.g. 'NJ' or 'CA' "
+        "(the state sets the legal jurisdiction). Set police_report_available=true "
+        "when a police report, responding officer, or report number is mentioned.\n\n"
         "JSON shape:\n"
         "{\n"
         '  "lead": {"full_name","date_of_birth"(YYYY-MM-DD if stated),"email","address",'
         '"occupation","employer","employment_status","annual_income"(number),"case_type",'
         '"preferred_contact_method","best_time_to_contact","has_attorney"(bool),'
         '"summary"(2-3 sentence neutral case summary)},\n'
-        '  "incidents": [{"incident_date","location_text","description",'
-        '"police_report_available"(bool),"fault_narrative","comparative_negligence_pct"(int)}],\n'
+        '  "incidents": [{"incident_date","location_text","incident_state"(2-letter US code),'
+        '"description","police_report_available"(bool),"fault_narrative",'
+        '"comparative_negligence_pct"(int)}],\n'
         '  "injuries": [{"body_part","description","severity","is_permanent"(bool),"requires_surgery"(bool)}],\n'
         '  "treatments": [{"provider_name","provider_type","treatment_type","start_date","end_date",'
         '"is_ongoing"(bool),"billed_amount"(number)}],\n'
@@ -201,3 +216,55 @@ async def merge_summaries(existing: str, new: str) -> str:
     finally:
         await client.close()
     return (resp.choices[0].message.content or "").strip() or f"{existing} {new}".strip()
+
+
+# Ordered keys of the attorney brief (also the render order on the lead detail).
+CASE_BRIEF_KEYS = ("headline", "liability", "injuries", "damages", "representation", "next_step")
+
+_CASE_BRIEF_PROMPT = (
+    "You are a senior personal-injury case manager writing an INTERNAL brief for "
+    "attorney triage. From the case facts provided, output a JSON object with EXACTLY "
+    "these keys, each a concise plain-text value (1-3 sentences, no markdown, no lists):\n"
+    '  "headline": one-line case headline (who, what, current posture).\n'
+    '  "liability": who is at fault, comparative-fault risk, witnesses/evidence, police report.\n'
+    '  "injuries": injuries with severity, treatment so far, and prognosis / future care.\n'
+    '  "damages": economic drivers (medical bills, lost wages / lost earning capacity) and '
+    "non-economic drivers, plus the estimated value if one is provided.\n"
+    '  "representation": whether the client already has an attorney; any deadline / statute-of-'
+    "limitations concern.\n"
+    '  "next_step": the single most important next action for the firm.\n'
+    "Base everything ONLY on the facts given. If something is unknown, write \"Unknown\" or omit "
+    "the key. This is internal — be candid about strengths and weaknesses. Output only the JSON "
+    "object."
+)
+
+
+async def generate_case_brief(facts: str) -> dict:
+    """Attorney-facing sectioned brief synthesized from the full accumulated case record.
+
+    Returns a dict with a subset of CASE_BRIEF_KEYS (empty dict on failure / no creds).
+    Internal-only — never surfaced to the client portal.
+    """
+    if not settings.deepseek_api_key or not facts.strip():
+        return {}
+    client = AsyncOpenAI(api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url)
+    try:
+        resp = await client.chat.completions.create(
+            model=settings.deepseek_model,
+            temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": _CASE_BRIEF_PROMPT},
+                {"role": "user", "content": facts},
+            ],
+        )
+    finally:
+        await client.close()
+    try:
+        data = json.loads(resp.choices[0].message.content or "{}")
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    # Keep only known keys with non-empty string values, in canonical order.
+    return {k: str(data[k]).strip() for k in CASE_BRIEF_KEYS if str(data.get(k) or "").strip()}

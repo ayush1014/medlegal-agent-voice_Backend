@@ -82,7 +82,7 @@ async def test_persist_normalizes_enums_and_writes_children(lead, owner_engine):
     assert counts == {"incidents": 1, "injuries": 1, "treatments": 1, "policies": 1, "parties": 1, "damages": 1}
 
     async with owner_engine.begin() as c:
-        ld = (await c.execute(text("SELECT full_name, case_type, pipeline_status, ai_summary "
+        ld = (await c.execute(text("SELECT full_name, case_type, pipeline_status, ai_summary, has_attorney "
                                    "FROM leads WHERE id=:i"), {"i": lead["lead_id"]})).first()
         sev = (await c.execute(text("SELECT severity FROM injuries WHERE lead_id=:i"),
                                {"i": lead["lead_id"]})).scalar_one()
@@ -96,7 +96,7 @@ async def test_persist_normalizes_enums_and_writes_children(lead, owner_engine):
     assert ld.full_name == "John Doe"
     assert ld.case_type == "Other Personal Injury"   # invalid → normalized
     assert ld.pipeline_status == "Intake Complete"
-    assert "represented: no" in ld.ai_summary.lower()
+    assert ld.has_attorney is False                  # representation now persisted as a column
     assert sev is None                                # invalid severity → null
     assert dmg.category == "other" and dmg.amount == 900
     assert pol_role.party_role == "other" and pol_role.policy_kind is None

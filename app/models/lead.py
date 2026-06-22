@@ -9,6 +9,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Date,
     ForeignKey,
@@ -19,7 +20,7 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -84,7 +85,13 @@ class Lead(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         Integer, nullable=False, server_default=text("0")
     )
     last_follow_up_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    # Short, client-safe summary (leads list + client portal).
     ai_summary: Mapped[str | None] = mapped_column(Text)
+    # Richer, sectioned attorney brief (internal lead detail only). See intake_pipeline.
+    case_brief: Mapped[dict | None] = mapped_column(JSONB)
+    # Whether the client already has an attorney (latest call wins). Authoritative for
+    # the funnel; ai_summary keeps a human-readable note too.
+    has_attorney: Mapped[bool | None] = mapped_column(Boolean)
 
     # --- Ownership / source ---
     assigned_user_id: Mapped[uuid.UUID | None] = mapped_column(

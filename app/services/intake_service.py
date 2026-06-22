@@ -26,6 +26,7 @@ _PARTIAL_LEAD_FIELDS = {
     "preferred_contact_method",
     "best_time_to_contact",
     "ai_summary",
+    "has_attorney",
 }
 
 

@@ -12,6 +12,8 @@ from datetime import date
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services import jurisdiction
+
 SEV_RANK = {"Minor": 1, "Moderate": 2, "Severe": 3, "Permanent": 4}
 
 
@@ -28,6 +30,7 @@ class Facts:
     has_attorney: bool | None = None
     ai_summary: str | None = None
     incident_date: date | None = None
+    incident_state: str | None = None  # 2-letter US code (jurisdiction)
     police_report_available: bool | None = None
     fault_narrative: str | None = None
     comparative_negligence_pct: int | None = None
@@ -102,24 +105,38 @@ def derive(f: Facts) -> dict:
 
 
 def has_attorney_flag(f: Facts) -> bool:
-    if f.has_attorney is True:
-        return True
+    # The structured column is authoritative (latest call wins). Fall back to the
+    # ai_summary substring only for legacy leads with no column value, so a stale
+    # historical "yes" can't stick after a caller later says they're unrepresented.
+    if f.has_attorney is not None:
+        return f.has_attorney
     return "already represented: yes" in (f.ai_summary or "").lower()
 
 
-def sol_signal(incident_date: date | None, today: date, case_type: str) -> str:
+def sol_signal(incident_date: date | None, today: date, case_type: str,
+               state: str | None = None) -> str:
     """Shared statute-of-limitations aging signal (single source for scoring +
-    qualification). Never a legal determination — just an aging band."""
+    qualification). Never a legal determination — just an aging band, now anchored on
+    the incident state's SOL when known (e.g. TN/KY are 1yr, not the generic 2yr)."""
     if incident_date is None:
         return "unknown"
     age = (today - incident_date).days
     if age < 0:
         return "unknown"
-    if case_type == "Wrongful Death":
-        return "fresh" if age < 730 else "old"
-    if age < 730:
+    years = jurisdiction.sol_years(state, case_type)
+    if years is None:
+        # Unknown jurisdiction → original generic aging bands (no behaviour change).
+        if case_type == "Wrongful Death":
+            return "fresh" if age < 730 else "old"
+        if age < 730:
+            return "fresh"
+        if age < 1095:
+            return "aging"
+        return "old"
+    sol_days = years * 365.25
+    if age < sol_days * 0.75:
         return "fresh"
-    if age < 1095:
+    if age < sol_days:
         return "aging"
     return "old"
 
@@ -127,11 +144,12 @@ def sol_signal(incident_date: date | None, today: date, case_type: str) -> str:
 async def load_facts(db: AsyncSession, lead_id: uuid.UUID) -> Facts:
     """Assemble Facts from the persisted lead + child tables (RLS-scoped session)."""
     lead = (await db.execute(
-        text("SELECT case_type, ai_summary FROM leads WHERE id = :id"), {"id": lead_id}
+        text("SELECT case_type, ai_summary, has_attorney FROM leads WHERE id = :id"), {"id": lead_id}
     )).first()
     inc = (await db.execute(
-        text("SELECT incident_date, police_report_available, fault_narrative, comparative_negligence_pct "
-             "FROM incidents WHERE lead_id = :id ORDER BY created_at LIMIT 1"), {"id": lead_id}
+        text("SELECT incident_date, incident_state, police_report_available, fault_narrative, "
+             "comparative_negligence_pct FROM incidents WHERE lead_id = :id ORDER BY created_at LIMIT 1"),
+        {"id": lead_id}
     )).first()
     injuries = [dict(r._mapping) for r in (await db.execute(
         text("SELECT severity, is_permanent, requires_surgery FROM injuries WHERE lead_id=:id"),
@@ -150,7 +168,9 @@ async def load_facts(db: AsyncSession, lead_id: uuid.UUID) -> Facts:
     return Facts(
         case_type=(lead.case_type if lead else "Other Personal Injury"),
         ai_summary=(lead.ai_summary if lead else None),
+        has_attorney=(lead.has_attorney if lead else None),
         incident_date=(inc.incident_date if inc else None),
+        incident_state=(inc.incident_state if inc else None),
         police_report_available=(inc.police_report_available if inc else None),
         fault_narrative=(inc.fault_narrative if inc else None),
         comparative_negligence_pct=(inc.comparative_negligence_pct if inc else None),

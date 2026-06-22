@@ -28,6 +28,8 @@ class Incident(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     incident_date: Mapped[date | None] = mapped_column(Date)
     location_text: Mapped[str | None] = mapped_column(String(512))
+    # 2-letter US state — sets jurisdiction (SOL + comparative-fault regime).
+    incident_state: Mapped[str | None] = mapped_column(String(2))
     lat: Mapped[float | None] = mapped_column(Numeric(9, 6))
     lng: Mapped[float | None] = mapped_column(Numeric(9, 6))
     description: Mapped[str | None] = mapped_column(Text)
