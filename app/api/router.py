@@ -11,7 +11,7 @@ from fastapi import APIRouter
 from app.api import health
 from app.api.routes import (
     admin, analytics, auth, documents, followups, leads, messaging, org, portal,
-    retainers, voice,
+    retainers, sign, voice,
 )
 
 api_router = APIRouter()
@@ -27,3 +27,4 @@ api_router.include_router(followups.router)
 api_router.include_router(portal.router)
 api_router.include_router(analytics.router)
 api_router.include_router(org.router)
+api_router.include_router(sign.router)

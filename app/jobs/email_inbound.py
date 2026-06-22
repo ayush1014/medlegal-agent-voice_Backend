@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
-from app.database import _build_async_url
+from app.database import NEON_CONNECT_ARGS, _build_async_url
 from app.services import document_service, email_service
 
 logger = logging.getLogger("medlegal.email.inbound")
@@ -117,7 +117,7 @@ def _mark_seen(uids: list[bytes]) -> None:
 
 async def _lead_emails() -> dict[str, tuple[uuid.UUID, uuid.UUID]]:
     """{lower(email): (organization_id, lead_id)} for leads with an email on file."""
-    engine = create_async_engine(_build_async_url(settings.database_url), poolclass=NullPool)
+    engine = create_async_engine(_build_async_url(settings.database_url), poolclass=NullPool, connect_args=NEON_CONNECT_ARGS)
     try:
         async with engine.connect() as conn:
             rows = (await conn.execute(text(

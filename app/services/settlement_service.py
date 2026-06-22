@@ -133,19 +133,16 @@ def estimate(
     elif gap is not None and gap > 90:
         net *= 0.85
 
-    # A6 coverage cap.
+    # A6 coverage cap. Treat coverage as "known" only when there's an identifiable RECOVERABLE
+    # limit (available > 0). Policies recorded without a usable limit/recovery path — e.g. only
+    # the client's own non-recovery coverage, or limits not captured — are NOT proof of $0
+    # recovery; that's incomplete data, so we fall to the soft ceiling and never zero a real
+    # injury. A genuine no-coverage case is surfaced for human review at qualification.
     available = d["available_coverage"]
-    coverage_known = d["coverage_known"]
+    coverage_known = d["coverage_known"] and available > 0
     if coverage_known:
-        if available <= 0:
-            cap_val = property_d + d["medpay"]
-            expected_base = min(net, cap_val)
-            if expected_base <= 0 and eligible_specials > 0:
-                expected_base = min(eligible_specials, d["medpay"])
-            coverage_binding = True
-        else:
-            coverage_binding = net > available
-            expected_base = min(net, available)
+        coverage_binding = net > available
+        expected_base = min(net, available)
     else:
         # Unknown coverage: soft ceiling at 3x specials so we never project a fantasy —
         # but never below a severity-floored general, or the floor would be cancelled out.

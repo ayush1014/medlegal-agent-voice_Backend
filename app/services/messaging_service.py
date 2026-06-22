@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
-from app.database import _build_async_url, session_scope
+from app.database import NEON_CONNECT_ARGS, _build_async_url, session_scope
 from app.security.context import system_context
 
 
@@ -136,7 +136,7 @@ async def send_message(
 async def resolve_lead_by_phone(phone: str) -> tuple[uuid.UUID, uuid.UUID] | None:
     """Find (org, lead) for an inbound message by the sender's phone. Cross-org
     lookup uses the owner connection (a single WhatsApp sender serves all firms)."""
-    engine = create_async_engine(_build_async_url(settings.database_url), poolclass=NullPool)
+    engine = create_async_engine(_build_async_url(settings.database_url), poolclass=NullPool, connect_args=NEON_CONNECT_ARGS)
     try:
         async with engine.connect() as conn:
             row = (await conn.execute(

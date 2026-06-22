@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from decimal import Decimal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
@@ -152,10 +154,19 @@ async def lead_document_file(
         {"d": doc_id, "l": lead_id})).first()
     if row is None or not row.storage_url:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
-    content = await asyncio.to_thread(document_service.load_object, row.storage_url)
+    try:
+        content = await asyncio.to_thread(document_service.load_object, row.storage_url)
+    except Exception:  # noqa: BLE001 - object missing/unreadable in storage → 404, not 500
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document file is not available") from None
+    # Content-Disposition is latin-1 only — filenames can carry non-latin-1 chars (e.g. the
+    # U+202F narrow no-break space in macOS screenshot names), so give an ASCII fallback plus
+    # an RFC 5987 UTF-8 form for the real name.
+    fname = row.file_name or "document"
+    ascii_name = fname.encode("ascii", "ignore").decode() or "document"
     return Response(
         content=content, media_type=row.mime_type or "application/octet-stream",
-        headers={"Content-Disposition": f'inline; filename="{row.file_name or "document"}"'},
+        headers={"Content-Disposition":
+                 f"inline; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(fname)}"},
     )
 
 
@@ -208,3 +219,28 @@ async def rescore_lead(lead_id: uuid.UUID, db: AsyncSession = Depends(get_staff_
     if exists is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Lead not found")
     return await lead_intelligence.run_for_lead(db, lead_id)
+
+
+class OutcomePatch(BaseModel):
+    outcome: str                          # settled | dropped | lost | referred_out
+    actual_settlement: Decimal | None = None
+
+
+@router.patch("/{lead_id}/outcome", dependencies=[Depends(require_csrf)])
+async def record_outcome(
+    lead_id: uuid.UUID, body: OutcomePatch, db: AsyncSession = Depends(get_staff_db)
+) -> dict:
+    """Record a case's realized outcome (settled amount + result) — feeds settlement
+    calibration (scoring-plan #5: predicted vs actual)."""
+    from app.services.calibration_service import VALID_OUTCOMES
+
+    if body.outcome not in VALID_OUTCOMES:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            f"outcome must be one of {VALID_OUTCOMES}")
+    res = await db.execute(
+        text("UPDATE leads SET outcome=:o, actual_settlement=:a, outcome_recorded_at=now() "
+             "WHERE id=:id AND deleted_at IS NULL"),
+        {"o": body.outcome, "a": body.actual_settlement, "id": lead_id})
+    if res.rowcount == 0:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Lead not found")
+    return {"ok": True, "lead_id": str(lead_id), "outcome": body.outcome}

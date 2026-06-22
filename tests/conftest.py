@@ -40,7 +40,7 @@ def _mock_outbound_sends(monkeypatch):
     monkeypatch.setattr(messaging_service, "_twilio_send",
                         lambda **kw: ("SM_" + _uuid.uuid4().hex[:10], "queued"), raising=False)
     monkeypatch.setattr(email_service, "_send_sync",
-                        lambda to, s, b, r: f"<{_uuid.uuid4().hex}@test>", raising=False)
+                        lambda to, s, b, r, attachments=None: f"<{_uuid.uuid4().hex}@test>", raising=False)
 
 
 @pytest_asyncio.fixture

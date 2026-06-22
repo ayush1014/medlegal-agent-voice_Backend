@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
-from app.database import _build_async_url, session_scope
+from app.database import NEON_CONNECT_ARGS, _build_async_url, session_scope
 from app.security.context import system_context
 from app.services import document_ai, document_service, lead_intelligence
 
@@ -139,7 +139,7 @@ async def _process_one(org, lead_id, doc_id, pre_matched: bool) -> None:
 async def process_pending_documents(limit: int = 10) -> dict:
     """Drain pending `document.received` events. Returns {processed, failed}."""
     result = {"processed": 0, "failed": 0}
-    engine = create_async_engine(_build_async_url(settings.database_url), poolclass=NullPool)
+    engine = create_async_engine(_build_async_url(settings.database_url), poolclass=NullPool, connect_args=NEON_CONNECT_ARGS)
     try:
         async with engine.connect() as conn:
             rows = (await conn.execute(

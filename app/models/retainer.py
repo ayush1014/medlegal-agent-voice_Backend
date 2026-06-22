@@ -33,6 +33,8 @@ class Retainer(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     template_id: Mapped[str | None] = mapped_column(String(80))
     document_url: Mapped[str | None] = mapped_column(Text)
+    # Name the client typed when e-signing (with signature_events for the full audit trail).
+    signer_name: Mapped[str | None] = mapped_column(String(255))
     # Internal mock for now; clean seam for DocuSign/Dropbox Sign later.
     esign_provider: Mapped[str | None] = mapped_column(String(40))
     esign_envelope_id: Mapped[str | None] = mapped_column(String(128))

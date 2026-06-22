@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
-from app.database import _build_async_url
+from app.database import NEON_CONNECT_ARGS, _build_async_url
 
 UPLOAD = "doc_upload"
 SIGN = "retainer_sign"
@@ -28,7 +28,7 @@ def _code(n: int = 7) -> str:
 
 
 def _engine():
-    return create_async_engine(_build_async_url(settings.database_url), poolclass=NullPool)
+    return create_async_engine(_build_async_url(settings.database_url), poolclass=NullPool, connect_args=NEON_CONNECT_ARGS)
 
 
 async def create(

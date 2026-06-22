@@ -39,7 +39,8 @@ def _enable_email(monkeypatch):
 
 async def test_send_email_records_message(org, owner_engine, monkeypatch):
     _enable_email(monkeypatch)
-    monkeypatch.setattr(email_service, "_send_sync", lambda to, s, b, r: "<mid-1@test>")
+    monkeypatch.setattr(email_service, "_send_sync",
+                        lambda to, s, b, r, attachments=None: "<mid-1@test>")
     lead_id = await _lead(owner_engine, org)
 
     mid = await email_service.send_email(org, lead_id, "client@example.com", "Subj", "Body here",
@@ -55,7 +56,7 @@ async def test_send_email_records_message(org, owner_engine, monkeypatch):
 async def test_doc_request_goes_via_email(org, owner_engine, monkeypatch):
     _enable_email(monkeypatch)
     sent = {}
-    def _fake_send(to, s, b, r):
+    def _fake_send(to, s, b, r, attachments=None):
         sent["to"] = to; sent["body"] = b
         return "<mid-2@test>"
     monkeypatch.setattr(email_service, "_send_sync", _fake_send)
@@ -98,4 +99,11 @@ async def test_inbound_ingests_attachments(org, owner_engine, monkeypatch):
                                       {"l": lead_id})).scalar_one()
         inbound = (await c.execute(text("SELECT count(*) FROM messages WHERE lead_id=:l "
                                         "AND direction='inbound'"), {"l": lead_id})).scalar_one()
-    assert n_docs == 1 and req_status == "Received" and inbound == 1
+        # Decoupled flow: ingest stores the file + emits document.received for the worker to
+        # classify + content-match. The request is NOT blind-marked Received on ingest.
+        events = (await c.execute(text(
+            "SELECT count(*) FROM outbox_events WHERE event_type='document.received' "
+            "AND aggregate_id IN (SELECT id FROM documents WHERE lead_id=:l)"),
+            {"l": lead_id})).scalar_one()
+    assert n_docs == 1 and inbound == 1
+    assert req_status == "Sent" and events == 1

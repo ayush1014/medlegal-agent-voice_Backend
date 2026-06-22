@@ -10,8 +10,28 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_staff_db
+from app.services import calibration_service
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
+
+
+@router.get("/calibration")
+async def calibration(db: AsyncSession = Depends(get_staff_db)) -> dict:
+    """Predicted-vs-actual settlement calibration over settled cases (scoring-plan #5).
+    Empty (not an error) until cases close with a recorded actual."""
+    rows = (await db.execute(text(
+        "SELECT l.case_type, l.actual_settlement, se.expected, se.low, se.high, se.confidence "
+        "FROM leads l "
+        "JOIN LATERAL (SELECT expected, low, high, confidence FROM settlement_estimates "
+        "  WHERE lead_id = l.id ORDER BY created_at DESC LIMIT 1) se ON true "
+        "WHERE l.deleted_at IS NULL AND l.outcome = 'settled' AND l.actual_settlement IS NOT NULL"
+    ))).all()
+    records = [{
+        "case_type": r[0], "actual": float(r[1]), "predicted": float(r[2] or 0),
+        "low": float(r[3]) if r[3] is not None else None,
+        "high": float(r[4]) if r[4] is not None else None, "confidence": r[5],
+    } for r in rows]
+    return {"sample_size": len(records), **calibration_service.compute_calibration(records)}
 
 
 async def _pairs(db: AsyncSession, sql: str) -> list[dict]:

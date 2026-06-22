@@ -100,18 +100,18 @@ def score(f: Facts, today: date | None = None) -> dict:
     econ = _clamp(econ, 0, 14)
     reasoning.append(f"Economic damages: {econ:.0f}/14 (${specials:,.0f} specials)")
 
-    # 5. Coverage availability (14)
-    cov_amt = d["at_fault_liability"] + d["um_cap"] + d["uim_cap"]
-    if len(f.policies) == 0:
+    # 5. Coverage availability (14). Use the SAME recoverable-coverage figure the settlement
+    # engine uses (derive.available_coverage), so scoring and settlement can never contradict
+    # (e.g. a UIM that doesn't apply without at-fault liability isn't counted here either).
+    cov_amt = d["available_coverage"]
+    if not d["coverage_known"]:
         cov = 4.0
         reasoning.append("Coverage availability: 4/14 (unknown — verify)")
     elif cov_amt <= 0:
         cov = 2.0 if d["medpay"] > 0 else 0.0
-        reasoning.append(f"Coverage availability: {cov:.0f}/14 (no recoverable liability coverage)")
+        reasoning.append(f"Coverage availability: {cov:.0f}/14 (no recoverable coverage identified)")
     else:
         cov = 6 if cov_amt < 25000 else 9 if cov_amt < 100000 else 12 if cov_amt < 300000 else 14
-        if (d["um_cap"] + d["uim_cap"]) > 0 and d["at_fault_liability"] <= 0:
-            cov = min(14, cov + 2)
         reasoning.append(f"Coverage availability: {cov:.0f}/14 (${cov_amt:,.0f} available)")
 
     # 6. Case-type base (8)

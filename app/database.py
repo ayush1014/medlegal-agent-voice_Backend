@@ -57,10 +57,21 @@ if not settings.rls_enforced:
         "Row-Level Security is NOT enforced. Set it for any shared environment."
     )
 
+# Neon's pooled endpoint is PgBouncer (transaction mode), which keeps server connections
+# alive across app restarts. asyncpg's named prepared-statement cache then goes stale after
+# a schema migration (ALTER TABLE) and raises InvalidCachedStatementError app-wide until
+# those server connections recycle. Disabling the cache makes migrations safe on live
+# connections. Shared by every engine in the app (workers build their own — see jobs/).
+NEON_CONNECT_ARGS = {
+    "statement_cache_size": 0,            # asyncpg: no named prepared-statement cache
+    "prepared_statement_cache_size": 0,   # SQLAlchemy asyncpg dialect cache
+}
+
 engine = create_async_engine(
     _build_async_url(settings.runtime_database_url),
     echo=settings.debug,
     pool_pre_ping=True,
+    connect_args=NEON_CONNECT_ARGS,
 )
 
 AsyncSessionLocal = async_sessionmaker(

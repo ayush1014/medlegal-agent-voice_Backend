@@ -67,6 +67,20 @@ def test_wrongful_death_gets_top_floor_at_low_confidence():
     assert r["confidence"] == "Low"
 
 
+def test_policies_without_recoverable_limit_do_not_zero_the_estimate():
+    # Policy rows exist (coverage_known) but none resolve to a recoverable limit —
+    # only the client's own Liability + a UIM that needs at-fault liability to apply, so
+    # available_coverage = 0. That's INCOMPLETE data, not confirmed $0 coverage: the
+    # estimate must fall to the soft ceiling (severity floor survives), not crush to $0.
+    r = _est(case_type="Slip and Fall",
+             injuries=[{"severity": "Moderate"}],
+             treatments=[{"provider_name": "ER"}],
+             policies=[{"party_role": "claimant", "policy_kind": "Liability", "coverage_limit": 50000},
+                       {"party_role": "claimant", "policy_kind": "UIM", "coverage_limit": 250000}])
+    assert r["expected"] > 0
+    assert "soft ceiling" in r["reasoning"]
+
+
 def test_hard_block_suppresses_estimate_regardless_of_floor():
     r = s.estimate(Facts(case_type="Auto Accident",
                          injuries=[{"severity": "Severe", "requires_surgery": True}],

@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
-from app.database import _build_async_url
+from app.database import NEON_CONNECT_ARGS, _build_async_url
 from app.services import followup_service, outbox_publisher
 
 # Import registers outbox handlers (intake.completed -> scoring/qualification/settlement).
@@ -30,7 +30,7 @@ logger = logging.getLogger("medlegal.followups")
 
 
 async def _list_org_ids() -> list[uuid.UUID]:
-    engine = create_async_engine(_build_async_url(settings.database_url), poolclass=NullPool)
+    engine = create_async_engine(_build_async_url(settings.database_url), poolclass=NullPool, connect_args=NEON_CONNECT_ARGS)
     try:
         async with engine.connect() as conn:
             rows = (await conn.execute(text("SELECT id FROM organizations"))).all()

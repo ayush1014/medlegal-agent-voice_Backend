@@ -76,6 +76,10 @@ class Lead(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         Integer, nullable=False, server_default=text("0")
     )
     settlement_expected: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    # Realized outcome (for calibration #5): settled | dropped | lost | referred_out.
+    outcome: Mapped[str | None] = mapped_column(String(24))
+    actual_settlement: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    outcome_recorded_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     retainer_status: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default=text("'Not Ready'")
     )

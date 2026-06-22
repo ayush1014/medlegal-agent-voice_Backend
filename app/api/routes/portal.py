@@ -89,6 +89,5 @@ async def sign(db: AsyncSession = Depends(get_client_db)) -> dict:
             {"l": lead_id})).scalar_one_or_none()
     if rid is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No retainer to sign")
-    await retainer_service.record_event(org, rid, lead_id, "viewed", actor="client")
-    await retainer_service.record_event(org, rid, lead_id, "signed", actor="client")
-    return {"retainer_id": str(rid), "status": "Signed"}
+    # Same path as the emailed magic-link: records signed, generates the PDF, emails a copy.
+    return await retainer_service.finalize_sign(org, lead_id, rid, lead.full_name)

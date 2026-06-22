@@ -27,8 +27,10 @@ from app.security.context import system_context
 logger = logging.getLogger("medlegal.email")
 
 
-def _send_sync(to: str, subject: str, body: str, reply_to: str | None) -> str:
-    """Blocking SMTP send (runs in a thread). Returns the Message-ID."""
+def _send_sync(to: str, subject: str, body: str, reply_to: str | None,
+               attachments: list[tuple[str, bytes, str]] | None = None) -> str:
+    """Blocking SMTP send (runs in a thread). Returns the Message-ID.
+    attachments: list of (filename, bytes, mime_type)."""
     msg = EmailMessage()
     msg["From"] = formataddr((settings.gmail_from_name, settings.gmail_user))
     msg["To"] = to
@@ -38,6 +40,10 @@ def _send_sync(to: str, subject: str, body: str, reply_to: str | None) -> str:
     message_id = make_msgid()
     msg["Message-ID"] = message_id
     msg.set_content(body)
+    for filename, content, mime in (attachments or []):
+        maintype, _, subtype = (mime or "application/octet-stream").partition("/")
+        msg.add_attachment(content, maintype=maintype or "application",
+                           subtype=subtype or "octet-stream", filename=filename)
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30) as server:
         server.starttls()
         server.login(settings.gmail_user, settings.gmail_app_password)
@@ -71,15 +77,16 @@ async def _record(
 async def send_email(
     organization_id: uuid.UUID, lead_id: uuid.UUID, to: str | None, subject: str, body: str,
     *, reply_to: str | None = None, purpose: str = "general",
+    attachments: list[tuple[str, bytes, str]] | None = None,
 ) -> str | None:
     """Send an email via Gmail SMTP + record it on the timeline. Returns Message-ID
-    (or None if email isn't configured / no recipient)."""
+    (or None if email isn't configured / no recipient). attachments: (filename, bytes, mime)."""
     if not settings.email_enabled:
         logger.warning("email not configured — skipping send to %s", to)
         return None
     if not to:
         return None
-    message_id = await asyncio.to_thread(_send_sync, to, subject, body, reply_to)
+    message_id = await asyncio.to_thread(_send_sync, to, subject, body, reply_to, attachments)
     try:
         await _record(organization_id, lead_id, direction="outbound", body=body,
                       purpose=purpose, provider_id=message_id)
