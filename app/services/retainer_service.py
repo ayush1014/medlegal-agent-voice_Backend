@@ -78,6 +78,7 @@ async def prepare_and_send(
 
     link = await sign_link(organization_id, lead_id)
     channel = "email" if (lead.email and settings.email_enabled) else settings.funnel_channel
+    sent_to: str | None = None
     if lead.email and settings.email_enabled:
         body = (
             "Great news from medLegal — your representation agreement (Letter of Representation) "
@@ -88,6 +89,7 @@ async def prepare_and_send(
         await email_service.send_email(
             organization_id, lead_id, lead.email, "Your representation agreement is ready to sign",
             body, purpose="retainer")
+        sent_to = lead.email
     elif to_e164:
         body = "Great news from medLegal — your representation agreement is ready."
         if link:
@@ -97,7 +99,8 @@ async def prepare_and_send(
             organization_id, lead_id, to_e164, body=body, channel=settings.funnel_channel,
             purpose="retainer", content_sid=settings.whatsapp_template_retainer,
             content_vars={"1": "medLegal", "2": link})
-    return {"retainer_id": str(row), "link": link, "channel": channel}
+        sent_to = to_e164
+    return {"retainer_id": str(row), "link": link, "channel": channel, "sent_to": sent_to}
 
 
 async def record_event(

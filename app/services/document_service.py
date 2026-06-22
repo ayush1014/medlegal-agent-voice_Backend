@@ -99,6 +99,7 @@ async def request_documents(
 
     link = await upload_link(organization_id, lead_id)
     checklist = ", ".join(docs)
+    sent_to: str | None = None
     # Send whenever there are outstanding (not-yet-received) asks — so a deliberate
     # "Request Documents" click always (re)sends the email, and the auto post-call
     # request fires once. (Nudges are a separate reminder path.)
@@ -112,6 +113,7 @@ async def request_documents(
         await email_service.send_email(
             organization_id, lead_id, email, "Documents needed for your case", body,
             purpose="doc_request")
+        sent_to = email
     elif missing > 0 and to_e164:
         body = f"Hi, it's medLegal. To move your case forward we need a few documents: {checklist}."
         if link:
@@ -123,7 +125,9 @@ async def request_documents(
             content_sid=settings.whatsapp_template_doc_request,
             content_vars={"1": "medLegal", "2": checklist, "3": link},
         )
-    return {"requested": docs, "created": created, "missing": missing, "link": link, "channel": channel}
+        sent_to = to_e164
+    return {"requested": docs, "created": created, "missing": missing, "link": link,
+            "channel": channel, "sent_to": sent_to}
 
 
 async def record_upload(
