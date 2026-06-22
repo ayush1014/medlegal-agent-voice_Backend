@@ -98,7 +98,8 @@ async def request_documents(
         missing = await _recompute_missing(db, lead_id)
 
     link = await upload_link(organization_id, lead_id)
-    checklist = ", ".join(docs)
+    checklist = ", ".join(docs)          # single line — used for SMS/WhatsApp
+    bullets = "\n".join(f"• {d}" for d in docs)  # bulleted — used for email
     sent_to: str | None = None
     # Send whenever there are outstanding (not-yet-received) asks — so a deliberate
     # "Request Documents" click always (re)sends the email, and the auto post-call
@@ -108,7 +109,8 @@ async def request_documents(
         # and clients send docs by replying with attachments anyway.
         body = (
             "Hi, this is medLegal. To move your case forward, please send us these documents:\n\n"
-            f"{checklist}.\n\nJust reply to this email with the photos or PDFs attached.\n\n"
+            f"{bullets}\n\n"
+            "Just reply to this email with the photos or PDFs attached.\n\n"
             "Thank you,\nThe medLegal team"
         )
         await email_service.send_email(
