@@ -104,11 +104,12 @@ async def request_documents(
     # "Request Documents" click always (re)sends the email, and the auto post-call
     # request fires once. (Nudges are a separate reminder path.)
     if missing > 0 and channel == "email" and email:
+        # No raw link in the email body — an IP-literal URL is a strong spam signal,
+        # and clients send docs by replying with attachments anyway.
         body = (
             "Hi, this is medLegal. To move your case forward, please send us these documents:\n\n"
-            f"{checklist}.\n\nJust reply to this email with the photos or PDFs attached"
-            + (f", or upload them securely here: {link}" if link else "")
-            + ".\n\nThank you,\nThe medLegal team"
+            f"{checklist}.\n\nJust reply to this email with the photos or PDFs attached.\n\n"
+            "Thank you,\nThe medLegal team"
         )
         await email_service.send_email(
             organization_id, lead_id, email, "Documents needed for your case", body,
