@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, String, Text, text
-from sqlalchemy.dialects.postgresql import UUID
+from decimal import Decimal
+
+from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, Numeric, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -43,6 +45,14 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     scan_status: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="pending"
     )
+
+    # --- AI classification (see app/services/document_ai.py + jobs/document_processing.py) ---
+    doc_category: Mapped[str | None] = mapped_column(String(48))          # e.g. medical_bill, insurance_dec
+    classification_confidence: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
+    doc_summary: Mapped[str | None] = mapped_column(Text)                 # short human summary for the card
+    extracted: Mapped[dict | None] = mapped_column(JSONB)                 # structured fields pulled from the doc
+    # processing | matched | needs_review | unmatched | failed
+    match_status: Mapped[str | None] = mapped_column(String(16))
 
     __table_args__ = (
         CheckConstraint(

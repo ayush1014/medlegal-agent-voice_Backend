@@ -43,3 +43,6 @@ langchain-core==0.3.28
 # Testing
 pytest==8.3.4
 pytest-asyncio==0.25.2
+
+# Document parsing (classify text-layer PDFs)
+pypdf==5.1.0

@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import session_scope
 from app.security.context import system_context
-from app.services import email_service, messaging_service, short_links
+from app.services import email_service, messaging_service, outbox_service, short_links
 
 # Sensible default asks per case type (subset of REQUESTABLE_DOCUMENTS).
 _DEFAULT_DOCS = {
@@ -41,6 +41,14 @@ def _store_object(path: str, content: bytes, mime: str | None) -> str:
     blob = bucket.blob(path)
     blob.upload_from_string(content, content_type=mime or "application/octet-stream")
     return f"gs://{settings.gcs_bucket_name}/{path}"
+
+
+def load_object(storage_url: str) -> bytes:
+    """Download an object's bytes from a gs:// reference. Mocked in tests."""
+    from app.services.storage import get_bucket
+
+    path = storage_url.split("/", 3)[3] if storage_url.startswith("gs://") else storage_url
+    return get_bucket().blob(path).download_as_bytes()
 
 
 async def upload_link(org: uuid.UUID, lead_id: uuid.UUID) -> str:
@@ -138,8 +146,14 @@ async def record_upload(
     mime: str | None = None, uploaded_by: str = "client", document_request_id: uuid.UUID | None = None,
     document_type: str | None = None,
 ) -> uuid.UUID:
-    """Persist an uploaded/received file to GCS + documents, matching it to a
-    pending request (by id or document_type) and refreshing the rollup."""
+    """Persist an uploaded/received file to GCS + documents, then emit `document.received`
+    so the document worker classifies it (gpt-4o vision), matches it to the requirement it
+    satisfies, mines structured data, and re-estimates. Stores fast; AI runs off the tx.
+
+    If the caller already KNOWS the type (explicit document_request_id/document_type — e.g.
+    a staff-tagged upload), we link + mark Received immediately; otherwise we DON'T blindly
+    satisfy the oldest ask — the worker does content-based matching (or routes to review).
+    """
     path = f"{organization_id}/{lead_id}/{uuid.uuid4().hex}_{file_name}"
     storage_url = _store_object(path, content, mime)
 
@@ -151,22 +165,22 @@ async def record_upload(
                 text("SELECT id FROM document_requests WHERE lead_id=:l AND document_type=:dt "
                      "AND status NOT IN ('Received','Waived') ORDER BY created_at LIMIT 1"),
                 {"l": lead_id, "dt": document_type})).scalar_one_or_none()
-        if req_id is None:
-            # Generic upload (no type tagged): satisfy the oldest outstanding ask so
-            # the checklist + missing_documents rollup advance the funnel.
-            req_id = (await db.execute(
-                text("SELECT id FROM document_requests WHERE lead_id=:l "
-                     "AND status NOT IN ('Received','Waived') ORDER BY created_at LIMIT 1"),
-                {"l": lead_id})).scalar_one_or_none()
+        matched = req_id is not None
         await db.execute(
             text("INSERT INTO documents (id, organization_id, lead_id, document_request_id, file_name, "
-                 "storage_url, mime_type, size_bytes, uploaded_by, scan_status) "
-                 "VALUES (:id,:o,:l,:rid,:fn,:url,:mime,:sz,:by,'clean')"),
+                 "storage_url, mime_type, size_bytes, uploaded_by, scan_status, match_status) "
+                 "VALUES (:id,:o,:l,:rid,:fn,:url,:mime,:sz,:by,'clean',:ms)"),
             {"id": doc_id, "o": organization_id, "l": lead_id, "rid": req_id, "fn": file_name,
-             "url": storage_url, "mime": mime, "sz": len(content), "by": uploaded_by},
+             "url": storage_url, "mime": mime, "sz": len(content), "by": uploaded_by,
+             "ms": "matched" if matched else "processing"},
         )
-        if req_id is not None:
+        if matched:
             await db.execute(
                 text("UPDATE document_requests SET status='Received' WHERE id=:rid"), {"rid": req_id})
+        await outbox_service.emit_event(
+            db, organization_id, aggregate_type="document", aggregate_id=doc_id,
+            event_type="document.received",
+            payload={"document_id": str(doc_id), "lead_id": str(lead_id), "pre_matched": matched},
+        )
         await _recompute_missing(db, lead_id)
     return doc_id

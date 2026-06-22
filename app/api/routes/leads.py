@@ -6,9 +6,10 @@ their own lead. Management mutations + the full detail aggregate require staff.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -134,6 +135,28 @@ async def lead_detail(lead_id: uuid.UUID, db: AsyncSession = Depends(get_staff_d
         "messages": await _rows(db, "SELECT id, channel, direction, body, purpose, status, created_at FROM messages WHERE lead_id=:id ORDER BY created_at DESC LIMIT 30", p),
         "timeline": await _rows(db, "SELECT event_type, name, payload, created_at FROM agent_events WHERE lead_id=:id ORDER BY created_at DESC LIMIT 40", p),
     }
+
+
+@router.get("/{lead_id}/documents/{doc_id}/file")
+async def lead_document_file(
+    lead_id: uuid.UUID, doc_id: uuid.UUID, db: AsyncSession = Depends(get_staff_db)
+) -> Response:
+    """Stream a document inline (for in-UI preview/open). RLS-scoped: the file must
+    belong to this lead in the staff's org. We proxy the bytes (no public signed URL)
+    so access stays behind auth."""
+    from app.services import document_service
+
+    row = (await db.execute(
+        text("SELECT storage_url, mime_type, file_name FROM documents "
+             "WHERE id=:d AND lead_id=:l AND deleted_at IS NULL"),
+        {"d": doc_id, "l": lead_id})).first()
+    if row is None or not row.storage_url:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
+    content = await asyncio.to_thread(document_service.load_object, row.storage_url)
+    return Response(
+        content=content, media_type=row.mime_type or "application/octet-stream",
+        headers={"Content-Disposition": f'inline; filename="{row.file_name or "document"}"'},
+    )
 
 
 class LeadPatch(BaseModel):

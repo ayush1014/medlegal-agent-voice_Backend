@@ -142,6 +142,10 @@ class Settings(BaseSettings):
     post_call_worker_enabled: bool = True
     post_call_interval_seconds: int = 5
 
+    # Document processor: drains `document.received` (classify → match → mine → re-estimate).
+    document_worker_enabled: bool = True
+    document_worker_interval_seconds: int = 5
+
     # OpenAI embeddings for RAG memory (dimension lives in models.enums).
     openai_api_key: str | None = None
     embedding_model: str = "text-embedding-3-small"
@@ -149,6 +153,8 @@ class Settings(BaseSettings):
     # Realtime conversation + dashboard chat QA → OpenAI gpt-4o-mini (fast).
     # Post-call extraction uses DeepSeek `deepseek_model` (v4-pro, thinking) for accuracy.
     voice_llm_model: str = "gpt-4o-mini"
+    # Multimodal model for document/image classification + reading (gpt-4o vision).
+    vision_model: str = "gpt-4o"
 
     # Firm timezone — anchors the "today" the voice agent uses to resolve relative
     # dates a caller gives ("last Tuesday", "a couple weeks ago").

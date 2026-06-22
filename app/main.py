@@ -66,6 +66,21 @@ async def _email_inbound_worker() -> None:
         await asyncio.sleep(settings.email_poll_seconds)
 
 
+async def _document_worker() -> None:
+    """Drain `document.received` events: classify (vision) → match requirement →
+    mine structured data → re-estimate. Decoupled so a vision-API hiccup is retryable."""
+    from app.jobs.document_processing import process_pending_documents
+
+    while True:
+        try:
+            res = await process_pending_documents()
+            if res.get("processed") or res.get("failed"):
+                logger.info("document tick: %s", res)
+        except Exception:  # noqa: BLE001 - a bad tick must not kill the loop
+            logger.exception("document tick failed")
+        await asyncio.sleep(settings.document_worker_interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup / shutdown hooks."""
@@ -74,6 +89,8 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(_post_call_worker()))
     if settings.email_inbound_enabled and settings.email_enabled:
         tasks.append(asyncio.create_task(_email_inbound_worker()))
+    if settings.document_worker_enabled:
+        tasks.append(asyncio.create_task(_document_worker()))
     if settings.followups_scheduler_enabled:
         tasks.append(asyncio.create_task(_followups_scheduler()))
     yield
