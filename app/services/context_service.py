@@ -640,7 +640,7 @@ async def answer_question(
     client = AsyncOpenAI(api_key=settings.openai_api_key)
     try:
         resp = await client.chat.completions.create(
-            model=model or settings.extraction_model, temperature=0,
+            model=model or settings.voice_llm_model, temperature=0,
             messages=[{"role": "system", "content": _ANSWER_SYS}, {"role": "user", "content": user}],
         )
     finally:

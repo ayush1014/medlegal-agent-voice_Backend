@@ -106,8 +106,19 @@ async def lead_detail(lead_id: uuid.UUID, db: AsyncSession = Depends(get_staff_d
     if head is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Lead not found")
     p = {"id": lead_id}
+    lead = dict(head._mapping)
+    # Profile fields the list query omits but the case file should show.
+    prof = (await db.execute(text(
+        "SELECT date_of_birth, address, occupation, employer, employment_status, annual_income, "
+        "preferred_contact_method, best_time_to_contact FROM leads WHERE id=:id"), p)).first()
+    if prof is not None:
+        lead.update(dict(prof._mapping))
     return {
-        "lead": dict(head._mapping),
+        "lead": lead,
+        # The full intake conversation, so staff can read everything the agent gathered.
+        "transcript": (await _rows(db, "SELECT full_text, status, created_at FROM intake_transcripts "
+                                   "WHERE lead_id=:id AND full_text IS NOT NULL "
+                                   "ORDER BY length(full_text) DESC LIMIT 1", p) or [None])[0],
         "incidents": await _rows(db, "SELECT * FROM incidents WHERE lead_id=:id ORDER BY created_at", p),
         "injuries": await _rows(db, "SELECT * FROM injuries WHERE lead_id=:id ORDER BY created_at", p),
         "treatments": await _rows(db, "SELECT * FROM medical_treatments WHERE lead_id=:id ORDER BY created_at", p),

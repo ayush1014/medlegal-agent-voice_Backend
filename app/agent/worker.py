@@ -258,7 +258,11 @@ async def entrypoint(ctx: JobContext) -> None:
         # persist the transcript and emit `call.ended`. The heavy pipeline
         # (extraction → memory → intelligence) is drained server-side by the
         # post-call worker, so a hangup can never kill it mid-flight.
-        status = "complete" if state["ended"] else "failed"
+        # Complete if the agent ended it, OR a real conversation happened — a caller who
+        # hangs up after the goodbye (without the end_intake tool firing) still completed
+        # a real intake. Only a near-empty call counts as failed.
+        caller_turns = sum(1 for line in transcript_lines if line.startswith("Caller:"))
+        status = "complete" if (state["ended"] or caller_turns >= 2) else "failed"
         transcript_text = "\n".join(transcript_lines)
         try:
             async with session_scope(system_context(intake_ctx.organization_id)) as db:

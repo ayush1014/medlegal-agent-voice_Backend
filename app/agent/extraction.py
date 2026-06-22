@@ -101,10 +101,29 @@ class Extraction(_Base):
 
 def _prompt() -> str:
     return (
-        "You extract structured personal-injury case facts from an intake call "
-        "transcript and output a single JSON object. Include ONLY facts the caller "
-        "actually stated; use null/empty when unknown — never invent. Dates as "
-        "YYYY-MM-DD. Amounts as plain numbers.\n\n"
+        "You are an expert personal-injury intake analyst. Extract EVERY fact the caller "
+        "stated from the intake transcript into a single JSON object. Be thorough and "
+        "exhaustive — re-read the whole transcript. Include ONLY facts the caller actually "
+        "stated; use null/empty when unknown — never invent. Dates as YYYY-MM-DD. Amounts "
+        "as plain numbers.\n\n"
+        "EXTRACTION GUIDELINES (these are commonly missed — do NOT skip them):\n"
+        "- PARTIES: list EVERY other person/entity involved — the at-fault driver, cyclist, "
+        "dog owner, property owner, employer, or business, plus passengers and witnesses. "
+        "Include the at-fault party EVEN IF unidentified or they fled (set full_name=null and "
+        "describe them in notes, e.g. 'cyclist who hit caller from behind and fled; no "
+        "witnesses'). A hit-and-run still has an at_fault party.\n"
+        "- DAMAGES: capture EVERY economic impact mentioned — missed work / lost wages "
+        "('lost_wages'), reduced ability to do their job or earn going forward "
+        "('lost_earning_capacity'), medical bills ('medical'), future/expected medical care "
+        "('future_medical'), vehicle or property damage ('property'), and other out-of-pocket "
+        "costs. If they say they missed work or can't do their job, that IS a lost-wages "
+        "damage even with no dollar figure (leave amount null).\n"
+        "- TREATMENTS / FUTURE CARE: capture where they were treated AND any future care "
+        "mentioned — follow-up visits, a cast, surgery, injections, ongoing therapy. Set "
+        "is_ongoing=true when treatment continues; set injuries.requires_surgery / "
+        "is_permanent when indicated.\n"
+        "- INJURIES: capture each body part with severity; loss of function, severe pain, or "
+        "inability to use a limb should be reflected in severity/description.\n\n"
         "JSON shape:\n"
         "{\n"
         '  "lead": {"full_name","date_of_birth"(YYYY-MM-DD if stated),"email","address",'
@@ -130,12 +149,13 @@ def _prompt() -> str:
 
 
 async def extract_from_transcript(transcript: str) -> Extraction:
-    if not settings.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set")
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    # DeepSeek v4-pro (thinking model) for accuracy — post-call, so latency is irrelevant.
+    if not settings.deepseek_api_key:
+        raise RuntimeError("DEEPSEEK_API_KEY is not set")
+    client = AsyncOpenAI(api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url)
     try:
         resp = await client.chat.completions.create(
-            model=settings.extraction_model,
+            model=settings.deepseek_model,
             temperature=0,
             response_format={"type": "json_object"},
             messages=[

@@ -146,10 +146,9 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     embedding_model: str = "text-embedding-3-small"
 
-    # LLM models (OpenAI). voice = realtime conversation; extraction = post-call
-    # facts + dashboard chat QA. (DeepSeek settings above kept for easy revert.)
+    # Realtime conversation + dashboard chat QA → OpenAI gpt-4o-mini (fast).
+    # Post-call extraction uses DeepSeek `deepseek_model` (v4-pro, thinking) for accuracy.
     voice_llm_model: str = "gpt-4o-mini"
-    extraction_model: str = "gpt-4o-mini"
 
     # Firm timezone — anchors the "today" the voice agent uses to resolve relative
     # dates a caller gives ("last Tuesday", "a couple weeks ago").
