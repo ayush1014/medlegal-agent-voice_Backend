@@ -49,3 +49,5 @@ pypdf==5.1.0
 
 # LOR / signed-document PDF generation
 fpdf2==2.8.1
+fonttools==4.63.0
+defusedxml==0.7.1
