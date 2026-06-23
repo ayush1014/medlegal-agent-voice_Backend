@@ -50,9 +50,9 @@ def test_confirmation_is_capped_not_a_loop():
     # Read back ONCE, cap retries, then move on — the opposite of the old behavior.
     _has("two passes", "move on")
     assert "once" in LOW
-    # Only spell letter-by-letter conditionally, never as a blanket mandate.
-    _has("letter-by-letter")
-    assert "only when" in LOW or "only when it's unusual" in LOW
+    # Name + email ARE spelled back letter-by-letter to confirm (critical fields) —
+    # mandatory now, but hard-capped above (two passes → move on) so it can't loop.
+    _has("letter-by-letter", "spelling")
 
 
 def test_handles_frustration_and_does_not_guess():
