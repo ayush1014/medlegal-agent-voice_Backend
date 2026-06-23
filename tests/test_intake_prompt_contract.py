@@ -38,10 +38,12 @@ def test_renders_without_leftover_placeholders():
 
 def test_prompt_stays_within_size_budget():
     # Re-sent every turn → guard against bloat. The pre-fix prompt was 11,533
-    # rendered chars; this budget keeps it strictly below that forever, while the
-    # floor proves we didn't gut the domain coverage / guardrails.
+    # rendered chars; this budget keeps it below that, while the floor proves we
+    # didn't gut the domain coverage / guardrails. Ceiling nudged 11,000 → 11,300
+    # when work/income + home address joined the must-ask-before-close set (lost
+    # wages + retainer paperwork) — required intake data, not bloat (~40 tokens).
     n = len(P)
-    assert 5_000 < n < 11_000, f"rendered prompt is {n} chars (expected 5,000–11,000)"
+    assert 5_000 < n < 11_300, f"rendered prompt is {n} chars (expected 5,000–11,300)"
 
 
 # --- The confirmation-discipline fix (the heart of the change) --------------
