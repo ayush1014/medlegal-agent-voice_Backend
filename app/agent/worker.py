@@ -220,7 +220,13 @@ async def entrypoint(ctx: JobContext) -> None:
         # the REAL caller. min_delay/max_delay bound the end-of-turn wait.
         turn_handling=TurnHandlingOptions(
             endpointing=EndpointingOptions(min_delay=0.4, max_delay=1.5),
-            interruption=InterruptionOptions(enabled=True),
+            # Letter-by-letter name/email spelling is a long, pause-y utterance, so a brief
+            # echo slip or a caller "mm-hmm" was cutting it off mid-spell (default min_words=0
+            # interrupts on a single blip). Require a REAL interruption — ≥2 words AND ≥0.6s of
+            # speech — before barging the agent; resume_false_interruption (default True) still
+            # recovers if a stray trigger slips through. Dial min_words to 1 if it ever feels
+            # hard to interrupt.
+            interruption=InterruptionOptions(enabled=True, min_words=2, min_duration=0.6),
         ),
     )
 
