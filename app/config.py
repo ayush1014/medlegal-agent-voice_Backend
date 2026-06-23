@@ -134,7 +134,15 @@ class Settings(BaseSettings):
     # in multi-instance deploys (use the `python -m app.jobs.followups` cron
     # instead) so the tick runs exactly once.
     followups_scheduler_enabled: bool = False
-    followups_interval_seconds: int = 900  # 15 minutes
+    followups_interval_seconds: int = 900  # 15 minutes — how often the sweep ticks
+    # Per-lead reminder cadence: re-nudge a stalled doc-collection / unsigned-LOR lead at
+    # most once every N hours (email + SMS), dynamically until the goal is met...
+    followup_nudge_interval_hours: int = 1
+    # ...but cap total auto-nudges per phase, then stop + flag for a human (anti-spam / TCPA).
+    followup_max_attempts: int = 10
+    # Quiet hours (firm timezone) — no reminders sent outside this window [start, end).
+    followup_quiet_start_hour: int = 8
+    followup_quiet_end_hour: int = 20
 
     # Post-call processor: drains `call.ended` outbox events (extraction → memory →
     # intelligence) inside the API process, OFF the voice worker's shutdown path so

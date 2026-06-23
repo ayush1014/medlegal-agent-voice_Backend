@@ -2,3 +2,6 @@
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = [
+    "llm: live LLM behavioral eval (hits a real model; needs an API key). Deselect with -m 'not llm'.",
+]

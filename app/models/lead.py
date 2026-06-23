@@ -89,6 +89,8 @@ class Lead(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         Integer, nullable=False, server_default=text("0")
     )
     last_follow_up_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    # Auto-reminders sent in the current phase (doc collection / LOR); reset on phase advance.
+    follow_up_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     # Short, client-safe summary (leads list + client portal).
     ai_summary: Mapped[str | None] = mapped_column(Text)
     # Richer, sectioned attorney brief (internal lead detail only). See intake_pipeline.

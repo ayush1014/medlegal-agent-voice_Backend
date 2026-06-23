@@ -84,7 +84,7 @@ async def test_inbound_ingests_attachments(org, owner_engine, monkeypatch):
 
     monkeypatch.setattr(document_service, "_store_object", lambda p, c, m: f"gs://bucket/{p}")
     monkeypatch.setattr(email_inbound, "_mark_seen", lambda uids: None)
-    monkeypatch.setattr(email_inbound, "_fetch_matching", lambda lead_emails: [{
+    monkeypatch.setattr(email_inbound, "_fetch_matching", lambda lead_emails, already_ids: [{
         "uid": b"1", "sender": "reply@example.com", "subject": "my docs",
         "message_id": "<in-1@example.com>",
         "attachments": [("police_report.pdf", b"%PDF-1.4 data", "application/pdf")],
@@ -107,3 +107,21 @@ async def test_inbound_ingests_attachments(org, owner_engine, monkeypatch):
             {"l": lead_id})).scalar_one()
     assert n_docs == 1 and inbound == 1
     assert req_status == "Sent" and events == 1
+
+
+def test_attachments_accepts_inline_images():
+    """Regression: Gmail/phone replies attach photos *inline* — these must be ingested,
+    while the text body and unnamed inline parts are ignored."""
+    from email.message import EmailMessage
+
+    msg = EmailMessage()
+    msg.set_content("Here are my documents.")                                   # text body
+    msg.add_attachment(b"\xff\xd8\xff inline-jpeg", maintype="image", subtype="jpeg",
+                       filename="IMG_4372.jpeg", disposition="inline")          # inline photo
+    msg.add_attachment(b"%PDF-1.4 data", maintype="application", subtype="pdf",
+                       filename="bills.pdf")                                     # real attachment
+    msg.add_attachment(b"\x89PNG decorative", maintype="image", subtype="png",
+                       disposition="inline")                                    # inline, no name
+
+    names = [n for n, _, _ in email_inbound._attachments(msg)]
+    assert names == ["IMG_4372.jpeg", "bills.pdf"]            # body + unnamed inline excluded
